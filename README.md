@@ -97,12 +97,16 @@ uv run psd paths
 
 ```text
 psd schema      # canonical table registry, machine-readable schemas, schema version
-psd validate    # validate a canonical dataset or Arrow/Parquet table
-psd canonical   # build, verify, and hash canonical datasets
+psd validate    # validate a canonical dataset: declarative columns plus cross-record rules
+psd canonical   # build and verify canonical datasets; print provenance and checksum manifests
 psd inspect     # inspect persisted tables and athlete event timelines
-psd provenance  # provenance and checksum manifests
 psd paths       # resolved external data-root layout
+psd version     # installed PSD version
 ```
+
+There is no separate `psd provenance` command: provenance and checksum manifests are part of
+a canonical dataset, so `psd canonical manifest` prints them rather than a second command
+re-reading state the manifest already owns.
 
 The CLI is orchestration over importable Python APIs; benchmark and schema logic never
 lives only inside command functions.
