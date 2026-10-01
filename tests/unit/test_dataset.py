@@ -25,6 +25,7 @@ from psd.provenance.sources import (
 )
 from psd.schema.models import AthleteRecord
 from psd.schema.registry import table_names
+from psd.schema.version import SCHEMA_VERSION
 from psd.serialization.dataset import (
     DatasetLayoutError,
     DatasetWriteSpec,
@@ -169,7 +170,7 @@ def test_write_then_read_round_trip(tmp_path: Path) -> None:
     data_root, relative = _minimal_dataset(tmp_path)
     dataset, manifest = read_dataset(relative, data_root=data_root)
     assert manifest.dataset_id == "ds_test"
-    assert manifest.schema_version == "psd-canonical/0.1.0"
+    assert manifest.schema_version == SCHEMA_VERSION.tag
     assert set(dataset.tables) == set(table_names())
     assert dataset.table("athlete").num_rows == 1
 

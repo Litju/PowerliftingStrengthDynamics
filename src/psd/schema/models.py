@@ -18,22 +18,34 @@ prescription existed in the source: PSD never reconstructs one from execution.
 
 from __future__ import annotations
 
+import re
+from collections.abc import Mapping
 from datetime import datetime
 from typing import Final, Self
 
 from pydantic import Field, model_validator
 
-from psd.schema.base import ContextRecord, EventRecord, normalize_timestamp
+from psd.schema.base import (
+    ContextRecord,
+    EventRecord,
+    normalize_configuration_flags,
+    normalize_timestamp,
+)
 from psd.schema.vocabulary import (
+    AmbiguityReason,
     AttemptOrderBasis,
     AttemptResult,
+    BarType,
     BodyMassContext,
     BodyMeasurementMethod,
     BodyMeasurementType,
     CompetitionResultKind,
+    ConfigurationFlag,
     EquipmentClass,
     EquipmentItem,
     EventTimePrecision,
+    ExerciseEquipment,
+    Grip,
     IdentityLinkMethod,
     IdentityStatus,
     ImplementType,
@@ -45,15 +57,21 @@ from psd.schema.vocabulary import (
     ObservationScope,
     ObservationType,
     ParentLift,
+    PauseRule,
     PrescriptionBasis,
     ProgramModificationKind,
+    RangeOfMotion,
     ReporterRole,
     RepStatus,
+    ResolutionMethod,
+    ResolutionStatus,
     SessionStatus,
     SessionType,
     SetStatus,
     SexCategory,
     SpecificityLevel,
+    Stance,
+    TempoPattern,
     TestType,
     ValueEncoding,
     VelocityMethod,
@@ -75,6 +93,7 @@ __all__ = (
     "EquipmentStateRecord",
     "ExerciseAliasRecord",
     "ExerciseDefinitionRecord",
+    "ExerciseNormalizationRecord",
     "ObservationRecord",
     "PerformanceTestRecord",
     "PerformedExerciseRecord",
@@ -116,6 +135,51 @@ PERCENT_MIN: Final[float] = 0.0
 PERCENT_MAX: Final[float] = 100.0
 ATTEMPT_NUMBERS: Final[tuple[int, ...]] = (1, 2, 3)
 NORMALIZATION_TOLERANCE: Final[float] = 1e-9
+
+#: Pause rules that represent a pause *added* on top of the competition rules of
+#: the parent lift, mapped to the coarse ``pause`` flag RES-235 defined.
+_ADDED_PAUSE_RULES: Final[dict[PauseRule, bool]] = {
+    PauseRule.BRIEF: True,
+    PauseRule.COUNT_2: True,
+    PauseRule.COUNT_3: True,
+    PauseRule.LONG: True,
+    PauseRule.NONE: False,
+    PauseRule.COMPETITION: False,
+    PauseRule.NOT_SPECIFIED: False,
+    PauseRule.UNKNOWN: False,
+}
+
+#: Specificity levels that must name a real competition lift as their parent.
+COMPETITION_PARENT_LIFTS: Final[frozenset[ParentLift]] = frozenset(
+    {ParentLift.SQUAT, ParentLift.BENCH, ParentLift.DEADLIFT}
+)
+
+#: ``source_system`` is deliberately free text so a future adapter can contribute
+#: a new namespace without a canonical schema change. This is the shape PSD's own
+#: namespaces follow, and what ``exercise_alias`` validates against.
+SOURCE_SYSTEM_PATTERN: Final[re.Pattern[str]] = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
+
+#: Alias registries are keyed by this version tag, recorded on every persisted row.
+ALIAS_VERSION_FIELD: Final[str] = "alias_registry_version"
+ONTOLOGY_VERSION_FIELD: Final[str] = "ontology_version"
+
+
+def pause_flag_for_rule(pause_rule: PauseRule) -> bool | None:
+    """Return the coarse ``pause`` flag for a pause rule.
+
+    The two views answer different questions. ``pause_rule`` says *which* pause the
+    exercise has; ``pause`` says whether a pause is *added* on top of the one the
+    competition rules already mandate. The competition bench press therefore records
+    ``pause=False`` with ``pause_rule=competition`` -- the mandated touch-and-pause is
+    part of the lift, not a variation of it -- while a paused bench press records
+    ``pause=True`` with ``pause_rule=brief``.
+
+    ``not_specified`` and ``unknown`` return ``None``: the source never said, so the
+    flag stays absent rather than claiming either answer.
+    """
+    if pause_rule in (PauseRule.NOT_SPECIFIED, PauseRule.UNKNOWN):
+        return None
+    return _ADDED_PAUSE_RULES[pause_rule]
 
 
 def _validate_percentage_triplet(
@@ -418,39 +482,336 @@ class EquipmentStateRecord(ContextRecord):
 
 
 class ExerciseDefinitionRecord(ContextRecord):
-    """Observable exercise semantics.
+    """Observable exercise semantics for one canonical exercise.
 
-    Deliberately free of transfer information: PSD describes what an exercise *is*
-    observably, and does not hard-code how one variation substitutes for another,
-    because that would impose a latent ontology on an ontology-free benchmark.
+    What an exercise **is**, and nothing about what it is worth. Every column here
+    is a property of the movement itself -- which lift it belongs to, what carries
+    the load, how the feet and hands are placed, how far it travels, what the pause
+    and tempo are. There is deliberately no transfer coefficient, no specificity
+    score, and no effectiveness number, because those are claims about athlete
+    response that PSD must not assert on a model's behalf; a model is free to learn
+    how response transfers between these descriptors.
+
+    ``canonical_key`` is the stable, human-readable identity used to derive
+    ``exercise_id`` and to reference the exercise from fixtures, adapters, and
+    tests. Two records with the same key are the same exercise, which the
+    cross-record rules enforce.
+
+    ``pause`` and ``pause_rule`` are two views of one fact, kept deliberately.
+    ``pause`` is the coarse RES-235 flag meaning "a pause is *added* on top of the
+    competition rules of the parent lift"; ``pause_rule`` says which pause. That is
+    why ``Competition Bench Press`` records ``pause=False`` with
+    ``pause_rule=competition`` while ``Paused Bench Press`` records ``pause=True``
+    with ``pause_rule=brief`` -- the rules-mandated pause is part of the lift, not
+    a variation of it.
     """
 
     exercise_id: str = Field(min_length=1, max_length=160)
+    canonical_key: str = Field(min_length=1, max_length=128, pattern=r"^[a-z][a-z0-9_]*$")
     canonical_name: str = Field(min_length=1, max_length=256)
     parent_lift: ParentLift = ParentLift.UNKNOWN
     specificity_level: SpecificityLevel = SpecificityLevel.UNKNOWN
     implement: ImplementType = ImplementType.UNKNOWN
+    bar_type: BarType = BarType.UNKNOWN
+    equipment: ExerciseEquipment = ExerciseEquipment.UNKNOWN
     laterality: Laterality = Laterality.UNKNOWN
-    stance: str | None = Field(default=None, max_length=64)
-    grip: str | None = Field(default=None, max_length=64)
-    range_of_motion: str | None = Field(default=None, max_length=64)
+    stance: Stance = Stance.UNKNOWN
+    grip: Grip = Grip.UNKNOWN
+    range_of_motion: RangeOfMotion = RangeOfMotion.UNKNOWN
     pause: bool | None = None
-    tempo: str | None = Field(default=None, max_length=64)
+    pause_rule: PauseRule = PauseRule.UNKNOWN
+    tempo: TempoPattern = TempoPattern.UNKNOWN
+    configuration: tuple[ConfigurationFlag, ...] = ()
     equipment_note: str | None = Field(default=None, max_length=256)
     definition_note: str | None = Field(default=None, max_length=1024)
 
+    @model_validator(mode="after")
+    def _check_consistency(self) -> Self:
+        """Enforce the descriptor relationships PSD can assert as facts.
+
+        These are structural facts about the *ontology*, not judgements about
+        training value: a competition lift is by definition one of the three
+        regulated lifts, and an accessory is by definition not inside a competition
+        lift's family.
+        """
+        object.__setattr__(self, "configuration", normalize_configuration_flags(self.configuration))
+        expected_pause = _ADDED_PAUSE_RULES.get(self.pause_rule)
+        if (
+            expected_pause is not None
+            and self.pause is not None
+            and self.pause is not expected_pause
+        ):
+            msg = (
+                f"pause={self.pause!r} contradicts pause_rule={self.pause_rule.value!r}; the "
+                "coarse pause flag marks a pause added on top of the competition rules"
+            )
+            raise ValueError(msg)
+        if (
+            self.specificity_level
+            in (
+                SpecificityLevel.COMPETITION_LIFT,
+                SpecificityLevel.COMPETITION_VARIATION,
+            )
+            and self.parent_lift not in COMPETITION_PARENT_LIFTS
+        ):
+            msg = (
+                f"specificity_level={self.specificity_level.value!r} requires parent_lift to be "
+                f"one of squat/bench/deadlift; got {self.parent_lift.value!r}"
+            )
+            raise ValueError(msg)
+        if self.parent_lift is ParentLift.ACCESSORY and self.specificity_level not in (
+            SpecificityLevel.SPORT_SPECIFIC,
+            SpecificityLevel.GENERAL_STRENGTH,
+            SpecificityLevel.ACCESSORY,
+        ):
+            msg = (
+                "An exercise in the accessory family cannot be a competition lift or a "
+                f"competition variation; got specificity_level="
+                f"{self.specificity_level.value!r}"
+            )
+            raise ValueError(msg)
+        if (
+            self.specificity_level is SpecificityLevel.COMPETITION_LIFT
+            and self.range_of_motion is not RangeOfMotion.COMPETITION
+        ):
+            msg = (
+                "A competition lift is defined by the depth its rules require, so it must record "
+                f"range_of_motion=competition; got {self.range_of_motion.value!r}"
+            )
+            raise ValueError(msg)
+        if self.pause is True and self.pause_rule is PauseRule.UNKNOWN:
+            msg = (
+                "pause=True requires a pause_rule; a coarse pause flag without the rule that "
+                "produced it cannot distinguish a 2-count from a long pause"
+            )
+            raise ValueError(msg)
+        return self
+
 
 class ExerciseAliasRecord(ContextRecord):
-    """A source-specific exercise alias mapped to a canonical exercise.
+    """One source-specific exercise label bound to a canonical exercise.
 
-    Source vocabulary differs per app; aliases are kept so that no raw label is
-    lost and no source string is silently rewritten.
+    The alias layer is what makes heterogeneous logs interoperable without
+    pretending the exercises are equivalent: ``Close Grip Bench Press`` and
+    ``Competition Bench Press`` both live here, both point at *different*
+    ``exercise_id`` values, and both keep their verbatim ``alias_raw`` spelling.
+
+    ``source_system`` is the namespace the alias belongs to, and it is free text
+    on purpose: a future adapter may contribute a namespace PSD has never seen
+    without changing the canonical schema or any existing exercise identity.
+
+    ``mapping_version`` and ``ontology_version`` record what the binding was made
+    against, so a consumer can refuse an alias registry it cannot honour instead of
+    silently reinterpreting it.
     """
 
     exercise_alias_id: str = Field(min_length=1, max_length=160)
     exercise_id: str = Field(min_length=1, max_length=160)
+    source_system: str = Field(min_length=1, max_length=64, pattern=SOURCE_SYSTEM_PATTERN.pattern)
     alias_raw: str = Field(min_length=1, max_length=512)
     alias_normalized: str = Field(min_length=1, max_length=512)
+    mapping_status: ResolutionStatus = ResolutionStatus.RESOLVED_ALIAS
+    mapping_version: str = Field(min_length=1, max_length=64)
+    ontology_version: str = Field(min_length=1, max_length=64)
+    note: str | None = Field(default=None, max_length=512)
+
+    @model_validator(mode="after")
+    def _check_consistency(self) -> Self:
+        """Reject an alias row that claims a resolution its own fields contradict."""
+        if self.alias_normalized != self.alias_normalized.strip():
+            msg = (
+                f"alias_normalized {self.alias_normalized!r} has surrounding whitespace; the "
+                "normalized form is compared and indexed, so it may not carry padding"
+            )
+            raise ValueError(msg)
+        if self.mapping_status not in _ALIAS_ROW_STATUSES:
+            msg = (
+                f"mapping_status={self.mapping_status.value!r} cannot describe an alias row; an "
+                "alias row is a resolved binding by construction, and unresolved labels are "
+                "recorded in exercise_normalization"
+            )
+            raise ValueError(msg)
+        if self.mapping_status is ResolutionStatus.EXACT_CANONICAL and self.alias_raw != (
+            self.alias_normalized
+        ):
+            msg = (
+                "mapping_status=exact_canonical requires alias_raw to equal alias_normalized; a "
+                "spelling variant is a known alias, not the canonical identity itself"
+            )
+            raise ValueError(msg)
+        return self
+
+
+_RESOLVED_STATUSES: Final[frozenset[ResolutionStatus]] = frozenset(
+    {ResolutionStatus.EXACT_CANONICAL, ResolutionStatus.RESOLVED_ALIAS}
+)
+
+_ALIAS_ROW_STATUSES: Final[frozenset[ResolutionStatus]] = frozenset(
+    {ResolutionStatus.EXACT_CANONICAL, ResolutionStatus.RESOLVED_ALIAS}
+)
+
+#: Which resolution status each resolution method is allowed to produce.
+#: Enforced so a method can never be recorded as the justification for an outcome it
+#: could not have produced, which is what makes the method column auditable.
+_STATUS_BY_METHOD: Final[Mapping[ResolutionMethod, frozenset[ResolutionStatus]]] = {
+    ResolutionMethod.CANONICAL_IDENTITY: frozenset({ResolutionStatus.EXACT_CANONICAL}),
+    ResolutionMethod.REGISTERED_ALIAS: frozenset({ResolutionStatus.RESOLVED_ALIAS}),
+    ResolutionMethod.CROSS_SOURCE_ALIAS: frozenset({ResolutionStatus.RESOLVED_ALIAS}),
+    ResolutionMethod.STRUCTURED_INTERPRETATION: frozenset(
+        {
+            ResolutionStatus.RESOLVED_ALIAS,
+            ResolutionStatus.AMBIGUOUS,
+        }
+    ),
+    ResolutionMethod.QUESTION_FORM: frozenset({ResolutionStatus.AMBIGUOUS}),
+    ResolutionMethod.GENERIC_QUALIFIER: frozenset({ResolutionStatus.PARTIAL_FAMILY}),
+    ResolutionMethod.FAMILY_KEYWORD: frozenset({ResolutionStatus.PARTIAL_FAMILY}),
+    ResolutionMethod.CURATED_AMBIGUOUS: frozenset(
+        {
+            ResolutionStatus.PARTIAL_FAMILY,
+            ResolutionStatus.AMBIGUOUS,
+            ResolutionStatus.UNMAPPED,
+        }
+    ),
+    ResolutionMethod.NO_MATCH: frozenset({ResolutionStatus.UNMAPPED}),
+}
+
+
+def _validate_resolution_ladder(record: ExerciseNormalizationRecord) -> None:
+    """Check an outcome never claims more than it established.
+
+    The ladder has one rule: an outcome that did not identify exactly one canonical
+    exercise must not carry that exercise, a confidence, an alias reference, or an
+    ambiguity reason that implies it did. Every check below exists to make
+    overstating an outcome impossible rather than merely discouraged.
+    """
+    status = record.resolution_status
+    resolved = status in _RESOLVED_STATUSES
+
+    if resolved != (record.exercise_id is not None):
+        verb = "requires" if resolved else "may not"
+        msg = (
+            f"resolution_status={status.value!r} {verb} an exercise_id; naming a canonical "
+            "exercise would be a mapping this outcome did not make"
+        )
+        raise ValueError(msg)
+    if resolved and record.candidate_exercise_ids:
+        msg = (
+            "A resolved outcome names one exercise and therefore has no candidates; listing "
+            "candidates alongside a resolution would present the refusal and the answer together"
+        )
+        raise ValueError(msg)
+    if resolved and record.ambiguity_reason is not None:
+        msg = "A resolved outcome has no ambiguity reason."
+        raise ValueError(msg)
+    if status is ResolutionStatus.PARTIAL_FAMILY and record.parent_lift is ParentLift.UNKNOWN:
+        msg = (
+            "resolution_status=partial_family must name the parent lift it did resolve; without "
+            "one it is indistinguishable from unmapped"
+        )
+        raise ValueError(msg)
+    if not resolved and record.candidate_exercise_ids and status is not ResolutionStatus.AMBIGUOUS:
+        msg = (
+            f"resolution_status={status.value!r} is not an ambiguity, so it has no canonical "
+            "candidates"
+        )
+        raise ValueError(msg)
+    if (status is ResolutionStatus.AMBIGUOUS) != (bool(record.candidate_exercise_ids)):
+        msg = (
+            "resolution_status=ambiguous requires at least one candidate exercise, and no other "
+            "status may carry one; otherwise a resolved result would be hidden inside a refusal"
+        )
+        raise ValueError(msg)
+
+
+def _validate_resolution_evidence(record: ExerciseNormalizationRecord) -> None:
+    """Check the confidence and alias reference match the resolution outcome."""
+    resolved = record.resolution_status in _RESOLVED_STATUSES
+    if record.confidence is not None and not resolved:
+        msg = (
+            "confidence describes the strength of a mapping claim and may only be present on a "
+            "resolved outcome; an unresolved or ambiguous result has no claim to be confident "
+            "about"
+        )
+        raise ValueError(msg)
+    if resolved and record.confidence is None:
+        msg = "A resolved outcome must record its mapping confidence."
+        raise ValueError(msg)
+    if record.source_alias_id is not None and not resolved:
+        msg = (
+            "source_alias_id points at a registered alias, so it is only meaningful for a "
+            "resolved outcome"
+        )
+        raise ValueError(msg)
+
+
+def _validate_resolution_method(record: ExerciseNormalizationRecord) -> None:
+    """Check the recorded method could have produced the recorded status."""
+    permitted = _STATUS_BY_METHOD.get(record.resolution_method)
+    if permitted is None:
+        msg = f"Unknown resolution method {record.resolution_method!r}."
+        raise ValueError(msg)
+    if record.resolution_status not in permitted:
+        allowed = ", ".join(sorted(item.value for item in permitted))
+        msg = (
+            f"resolution_method={record.resolution_method.value!r} can produce "
+            f"[{allowed}]; got resolution_status={record.resolution_status.value!r}"
+        )
+        raise ValueError(msg)
+
+
+class ExerciseNormalizationRecord(ContextRecord):
+    """The outcome of normalizing one raw source exercise label.
+
+    This is the audit record for every mapping decision PSD makes about a
+    heterogeneous label, including the ones it refuses to make. Its whole purpose
+    is that the *refusals* are as inspectable as the successes:
+
+    * ``raw_label`` is always the verbatim source string, never rewritten;
+    * ``resolution_status`` separates an exact identity from a known alias, a
+      family-only reading, an ambiguity, and an honest "not mapped";
+    * ``candidate_exercise_ids`` records the defensible readings PSD declined to
+      choose between, sorted so the list is deterministic;
+    * ``ambiguity_reason`` says *why* no canonical exercise was forced, so a
+      reviewer can tell "the source was vague" apart from "PSD has never seen this
+      label".
+
+    ``confidence`` describes the strength of the *mapping claim only* -- never the
+    training value of the exercise and never a transfer coefficient. It is fixed
+    per resolution method by the ontology, and it is null for every outcome that
+    does not name exactly one canonical exercise.
+    """
+
+    normalization_id: str = Field(min_length=1, max_length=160)
+    raw_label: str = Field(min_length=1, max_length=512)
+    normalized_label: str = Field(min_length=1, max_length=512)
+    normalization_rules: tuple[str, ...] = ()
+    source_system: str = Field(min_length=1, max_length=64, pattern=SOURCE_SYSTEM_PATTERN.pattern)
+    source_alias_id: str | None = Field(default=None, max_length=160)
+    resolution_status: ResolutionStatus
+    resolution_method: ResolutionMethod
+    exercise_id: str | None = Field(default=None, max_length=160)
+    parent_lift: ParentLift = ParentLift.UNKNOWN
+    candidate_exercise_ids: tuple[str, ...] = ()
+    confidence: float | None = Field(default=None, ge=0.0, le=1.0)
+    ambiguity_reason: AmbiguityReason | None = None
+    mapping_version: str = Field(min_length=1, max_length=64)
+    ontology_version: str = Field(min_length=1, max_length=64)
+    note: str | None = Field(default=None, max_length=512)
+
+    @model_validator(mode="after")
+    def _check_consistency(self) -> Self:
+        """Enforce the resolution ladder, so an outcome cannot overstate itself."""
+        object.__setattr__(
+            self, "candidate_exercise_ids", tuple(sorted(set(self.candidate_exercise_ids)))
+        )
+        object.__setattr__(
+            self, "normalization_rules", tuple(sorted(set(self.normalization_rules)))
+        )
+        _validate_resolution_ladder(self)
+        _validate_resolution_evidence(self)
+        _validate_resolution_method(self)
+        return self
 
 
 # --------------------------------------------------------------------------

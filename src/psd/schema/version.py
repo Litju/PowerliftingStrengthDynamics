@@ -11,8 +11,10 @@ from __future__ import annotations
 from typing import Final
 
 from psd.versions import (
+    ALIAS_REGISTRY_VERSION,
     CANONICAL_SCHEMA_NAME,
     MANIFEST_VERSION,
+    ONTOLOGY_VERSION,
     SCHEMA_VERSION,
     SchemaVersion,
     SchemaVersionError,
@@ -26,9 +28,11 @@ from psd.versions import (
 ID_SCHEME: Final[str] = "psd-ids-v1"
 
 __all__ = (
+    "ALIAS_REGISTRY_VERSION",
     "CANONICAL_SCHEMA_NAME",
     "ID_SCHEME",
     "MANIFEST_VERSION",
+    "ONTOLOGY_VERSION",
     "SCHEMA_VERSION",
     "SchemaVersion",
     "SchemaVersionError",

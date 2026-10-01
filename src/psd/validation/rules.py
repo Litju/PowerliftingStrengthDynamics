@@ -7,6 +7,8 @@ PSD data contract at the level of relationships between records:
   athlete;
 * **prescription/execution separation** -- execution references a plan only
   through an explicit link, never by reconstructing one;
+* **exercise identity** -- one canonical key per exercise, one binding per alias
+  within a source system, and ambiguous candidates that actually exist;
 * **real/synthetic separation** -- rows about a synthetic athlete come only from a
   synthetic source, and vice versa;
 * **explicit missingness** -- a row with absent values should say why;
@@ -154,6 +156,34 @@ _FOREIGN_KEYS: tuple[_ForeignKey, ...] = (
         "exercise_id",
         "exercise_definition",
         "exercise_id",
+    ),
+    _ForeignKey(
+        "dangling_exercise",
+        "planned_exercise",
+        "exercise_id",
+        "exercise_definition",
+        "exercise_id",
+    ),
+    _ForeignKey(
+        "dangling_exercise",
+        "exercise_alias",
+        "exercise_id",
+        "exercise_definition",
+        "exercise_id",
+    ),
+    _ForeignKey(
+        "dangling_exercise",
+        "exercise_normalization",
+        "exercise_id",
+        "exercise_definition",
+        "exercise_id",
+    ),
+    _ForeignKey(
+        "dangling_exercise_alias",
+        "exercise_normalization",
+        "source_alias_id",
+        "exercise_alias",
+        "exercise_alias_id",
     ),
     _ForeignKey(
         "dangling_velocity_set",
@@ -715,6 +745,95 @@ def check_missingness_reason_known(tables: TableRows) -> list[ValidationIssue]:
     return issues
 
 
+def check_exercise_identity_and_alias_bindings(tables: TableRows) -> list[ValidationIssue]:
+    """Check the exercise tables agree with each other.
+
+    Three relationships a per-column check cannot express:
+
+    * **Canonical identity is unique.** Two exercise definitions may not claim the
+      same ``canonical_key``; ``exercise_id`` is derived from it, so a duplicate
+      means two identities were minted for one exercise.
+    * **One alias, one binding.** Within a single ``source_system``, one normalized
+      label may not point at two different canonical exercises. Two sources may
+      legitimately spell the same label for different exercises -- which is why
+      the rule is scoped per source -- but within one source it is a silent
+      contradiction.
+    * **Ambiguity candidates must exist.** An ambiguous normalization outcome is
+      only useful if the candidates it declines to choose between are real
+      exercises.
+    """
+    issues: list[ValidationIssue] = list(_check_unique_canonical_keys(tables))
+    issues.extend(_check_alias_binding_conflicts(tables))
+    issues.extend(_check_candidate_exercises_exist(tables))
+    return issues
+
+
+def _check_unique_canonical_keys(tables: TableRows) -> Iterable[ValidationIssue]:
+    """Report exercise definitions that reuse a canonical key."""
+    seen: dict[Any, str] = {}
+    for row in tables.get("exercise_definition", ()):
+        key = row.get("canonical_key")
+        identifier = record_id("exercise_definition", row)
+        if key is None:
+            continue
+        previous = seen.setdefault(key, identifier)
+        if previous != identifier:
+            yield ValidationIssue(
+                code="duplicate_canonical_key",
+                severity=Severity.ERROR,
+                table="exercise_definition",
+                record_id=identifier,
+                message=(
+                    f"canonical_key {key!r} is already claimed by {previous}; two canonical "
+                    "identities for one exercise would make every downstream grouping ambiguous"
+                ),
+            )
+
+
+def _check_alias_binding_conflicts(tables: TableRows) -> Iterable[ValidationIssue]:
+    """Report one alias bound to two canonical exercises within a single source."""
+    bindings: dict[tuple[Any, Any], tuple[Any, str]] = {}
+    for row in tables.get("exercise_alias", ()):
+        identifier = record_id("exercise_alias", row)
+        key = (row.get("source_system"), row.get("alias_normalized"))
+        exercise_id = row.get("exercise_id")
+        previous = bindings.setdefault(key, (exercise_id, identifier))
+        if previous[0] != exercise_id:
+            yield ValidationIssue(
+                code="alias_binding_conflict",
+                severity=Severity.ERROR,
+                table="exercise_alias",
+                record_id=identifier,
+                message=(
+                    f"source_system {key[0]!r} binds alias {key[1]!r} to {exercise_id!r}, but "
+                    f"{previous[0]!r} ({previous[1]}) binds it too; two aliases cannot silently "
+                    "claim conflicting canonical identities"
+                ),
+            )
+
+
+def _check_candidate_exercises_exist(tables: TableRows) -> Iterable[ValidationIssue]:
+    """Report ambiguous outcomes whose candidate exercises are not registered."""
+    known = {
+        row.get("exercise_id")
+        for row in tables.get("exercise_definition", ())
+        if row.get("exercise_id") is not None
+    }
+    for row in tables.get("exercise_normalization", ()):
+        candidates = row.get("candidate_exercise_ids") or ()
+        for candidate in candidates:
+            if candidate not in known:
+                yield ValidationIssue(
+                    code="dangling_candidate_exercise",
+                    severity=Severity.ERROR,
+                    table="exercise_normalization",
+                    record_id=record_id("exercise_normalization", row),
+                    message=(
+                        f"candidate exercise {candidate!r} is not present in exercise_definition"
+                    ),
+                )
+
+
 def all_issues(tables: TableRows) -> list[ValidationIssue]:
     """Run every cross-record rule and return the combined findings."""
     checks: tuple[Any, ...] = (
@@ -722,6 +841,7 @@ def all_issues(tables: TableRows) -> list[ValidationIssue]:
         check_source_provenance,
         check_synthetic_separation,
         check_repeated_records,
+        check_exercise_identity_and_alias_bindings,
         check_explicit_missingness,
         check_no_sentinel_zero,
         check_rpe_rir_consistency,

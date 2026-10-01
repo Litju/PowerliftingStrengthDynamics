@@ -114,7 +114,7 @@ lives only inside command functions.
 ## Repository status
 
 * **Stage:** pre-alpha (`Development Status :: 2 - Pre-Alpha`).
-* **Schema version:** `psd-canonical/0.1.0` — not a frozen public contract.
+* **Schema version:** `psd-canonical/0.2.0` — not a frozen public contract.
 * **Design authority:** scientific design documents are *tentative*; the technical
   stack and engineering constraints document is *locked* for v0/Alpha.
 

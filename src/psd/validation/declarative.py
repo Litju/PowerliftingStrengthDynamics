@@ -76,6 +76,20 @@ VOCABULARY_BY_COLUMN: Mapping[tuple[str, str], str] = {
     ("exercise_definition", "specificity_level"): "specificity_level",
     ("exercise_definition", "laterality"): "laterality",
     ("exercise_definition", "implement"): "implement_type",
+    ("exercise_definition", "bar_type"): "bar_type",
+    ("exercise_definition", "equipment"): "equipment",
+    ("exercise_definition", "stance"): "stance",
+    ("exercise_definition", "grip"): "grip",
+    ("exercise_definition", "range_of_motion"): "range_of_motion",
+    ("exercise_definition", "pause_rule"): "pause_rule",
+    ("exercise_definition", "tempo"): "tempo",
+    ("exercise_definition", "configuration"): "configuration_flag",
+    ("exercise_alias", "mapping_status"): "resolution_status",
+    ("exercise_normalization", "resolution_status"): "resolution_status",
+    ("exercise_normalization", "resolution_method"): "resolution_method",
+    ("exercise_normalization", "parent_lift"): "parent_lift",
+    ("exercise_normalization", "ambiguity_reason"): "ambiguity_reason",
+    ("exercise_normalization", "normalization_rules"): "text_rule",
     ("planned_session", "session_status"): "session_status",
     ("planned_session", "not_performed_reason"): "not_performed_reason",
     ("planned_set", "prescription_basis"): "prescription_basis",
@@ -121,6 +135,7 @@ COLUMN_RANGES: Mapping[str, tuple[float, float]] = {
     "target_percent_one_rm": (0.0, 100.0),
     "velocity_loss_percent": (0.0, 100.0),
     "link_confidence": (0.0, 1.0),
+    "confidence": (0.0, 1.0),
     "attempt_number": (1.0, 3.0),
     "birth_year": (1900.0, 2100.0),
     "mean_velocity_mps": (0.0, 20.0),
@@ -362,7 +377,12 @@ def _offenders(
         return []
     indexed = frame.with_row_index(_ROW_INDEX_COLUMN)
     if probe.explode:
-        indexed = indexed.explode(probe.name)
+        # ``empty_as_null`` is stated explicitly because Polars 2.0 will flip its
+        # default, and PSD runs with warnings as errors: an ambiguous default would
+        # turn a vocabulary check into a hard failure on the next Polars release.
+        # An empty list must stay an empty string being checked, not a null that
+        # silently skips the check.
+        indexed = indexed.explode(probe.name, empty_as_null=True)
     offending = indexed.filter(probe.predicate)
     if offending.height == 0:
         return []

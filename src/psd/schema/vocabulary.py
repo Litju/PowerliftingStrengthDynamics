@@ -27,18 +27,25 @@ from psd.provenance.sources import (
 )
 
 __all__ = (
+    "TEXT_NORMALIZATION_RULES",
     "VOCABULARIES",
+    "AliasSourceSystem",
+    "AmbiguityReason",
     "AttemptOrderBasis",
     "AttemptResult",
+    "BarType",
     "BodyMassContext",
     "BodyMeasurementMethod",
     "BodyMeasurementType",
     "CompetitionResultKind",
+    "ConfigurationFlag",
     "ConsentBasis",
     "DataRegime",
     "EquipmentClass",
     "EquipmentItem",
     "EventTimePrecision",
+    "ExerciseEquipment",
+    "Grip",
     "IdentityLinkMethod",
     "IdentityStatus",
     "ImplementType",
@@ -50,18 +57,24 @@ __all__ = (
     "ObservationScope",
     "ObservationType",
     "ParentLift",
+    "PauseRule",
     "PrescriptionBasis",
     "ProgramModificationKind",
     "QualityFlag",
+    "RangeOfMotion",
     "RedistributionPolicy",
     "RepStatus",
     "ReporterRole",
+    "ResolutionMethod",
+    "ResolutionStatus",
     "SessionStatus",
     "SessionType",
     "SetStatus",
     "SexCategory",
     "SourceNature",
     "SpecificityLevel",
+    "Stance",
+    "TempoPattern",
     "TestType",
     "ValueEncoding",
     "VelocityMethod",
@@ -232,6 +245,271 @@ class Laterality(StrEnum):
     BILATERAL = "bilateral"
     UNILATERAL = "unilateral"
     UNKNOWN = "unknown"
+
+
+class Stance(StrEnum):
+    """Foot placement, where the label distinguishes one.
+
+    ``NOT_SPECIFIED`` is the default and is deliberately distinct from
+    ``UNKNOWN``: an unqualified label is normal in powerlifting logs, and PSD
+    refuses to guess a stance the source never named. Sumo and conventional
+    deadlifts are separate entities rather than one entity with a stance
+    attribute, because the distinction may matter to a model even though both
+    share the same parent lift.
+    """
+
+    NOT_SPECIFIED = "not_specified"
+    HIGH = "high"
+    LOW = "low"
+    WIDE = "wide"
+    MODERATE = "moderate"
+    NARROW = "narrow"
+    SPLIT = "split"
+    UNKNOWN = "unknown"
+
+
+class Grip(StrEnum):
+    """Hand placement, where the label distinguishes one.
+
+    Close-grip and competition-grip bench presses stay separate entities. They
+    share a parent lift and nothing else, and collapsing them would assert an
+    equivalence the source never made.
+    """
+
+    NOT_SPECIFIED = "not_specified"
+    COMPETITION = "competition"
+    FRONT_RACK = "front_rack"
+    CLOSE = "close"
+    WIDE = "wide"
+    NEUTRAL = "neutral"
+    MIXED = "mixed"
+    OVERHAND = "overhand"
+    UNDERHAND = "underhand"
+    SUPINATED = "supinated"
+    PRONATED = "pronated"
+    UNKNOWN = "unknown"
+
+
+class RangeOfMotion(StrEnum):
+    """Range of motion the exercise actually traverses.
+
+    ``ELEVATED_START`` covers lifts that begin from an elevated position rather
+    than the floor, such as a deficit deadlift. ``REDUCED`` is shorter than
+    ``PARTIAL``: a floor press or a Spoto press stops well short of a full
+    competition repetition.
+    """
+
+    NOT_SPECIFIED = "not_specified"
+    COMPETITION = "competition"
+    FULL = "full"
+    PARTIAL = "partial"
+    REDUCED = "reduced"
+    ELEVATED_START = "elevated_start"
+    UNKNOWN = "unknown"
+
+
+class PauseRule(StrEnum):
+    """Pause characteristics.
+
+    The distinction that matters here is between a pause the competition rules
+    *mandate* -- which is part of the definition of the lift itself -- and a pause
+    a program *adds* on top of it. ``COMPETITION`` is the mandated pause; ``BRIEF``,
+    ``COUNT_2``, ``COUNT_3`` and ``LONG`` are added pauses. That is why
+    ``Paused Bench Press`` (``BRIEF``) stays distinct from ``Bench Press``
+    (``COMPETITION``) even though both record ``pause = True`` at the coarser
+    ``Competition Bench Press`` family level.
+
+    A 2-count and a long pause are deliberately different members: a counted
+    pause and an open-ended one are different prescriptions and PSD does not
+    collapse them.
+    """
+
+    NOT_SPECIFIED = "not_specified"
+    NONE = "none"
+    COMPETITION = "competition"
+    BRIEF = "brief"
+    COUNT_2 = "count_2"
+    COUNT_3 = "count_3"
+    LONG = "long"
+    UNKNOWN = "unknown"
+
+
+class TempoPattern(StrEnum):
+    """Prescribed lifting tempo.
+
+    ``TEMPO_COUNT`` is a numeric scheme such as ``3-0-1``; ``TEMPO_PRESCRIBED``
+    is a controlled tempo whose exact scheme the label did not give. Tempo is a
+    separate axis from :class:`PauseRule`: a lift may be tempo-controlled without
+    being paused.
+    """
+
+    NOT_SPECIFIED = "not_specified"
+    CONTROLLED_ECCENTRIC = "controlled_eccentric"
+    TEMPO_COUNT = "tempo_count"
+    TEMPO_PRESCRIBED = "tempo_prescribed"
+    UNKNOWN = "unknown"
+
+
+class BarType(StrEnum):
+    """Which bar or shaft carries the load.
+
+    Kept separate from :class:`ImplementType`: the implement says *how* the load
+    is held, the bar says *which* bar. ``NOT_APPLICABLE`` is the honest default for
+    bodyweight, dumbbell, cable and machine work, where there is no bar at all.
+    """
+
+    NOT_APPLICABLE = "not_applicable"
+    OLYMPIC_BAR = "olympic_bar"
+    SPECIALTY_BAR = "specialty_bar"
+    SAFETY_BAR = "safety_bar"
+    TRAP_BAR = "trap_bar"
+    EZ_BAR = "ez_bar"
+    CURL_BAR = "curl_bar"
+    T_BAR = "t_bar"
+    UNKNOWN = "unknown"
+
+
+class ExerciseEquipment(StrEnum):
+    """Fixed apparatus the exercise requires, beyond the implement.
+
+    This is the *apparatus* axis, not the athlete's chosen equipment: shoes,
+    belt and suit belong to ``equipment_state`` on the athlete's history, while
+    this says what machine or bench the exercise itself needs. ``NONE`` is the
+    honest value for a free-standing barbell or bodyweight exercise that needs no
+    apparatus, which is different from not having checked.
+    """
+
+    NONE = "none"
+    FLAT_BENCH = "flat_bench"
+    INCLINE_BENCH = "incline_bench"
+    DECLINE_BENCH = "decline_bench"
+    RACK = "rack"
+    BOX = "box"
+    PLATFORMS = "platforms"
+    MACHINE = "machine"
+    CABLE_STATION = "cable_station"
+    LANDMINE = "landmine"
+    DIP_BARS = "dip_bars"
+    HYPEREXTENSION_BENCH = "hyperextension_bench"
+    UNKNOWN = "unknown"
+
+
+class ConfigurationFlag(StrEnum):
+    """Positional or configuration descriptors that need a flag rather than a level.
+
+    Kept as a sorted, de-duplicated list so two equal configurations serialize to
+    identical bytes regardless of authoring order. These describe *how* the
+    movement is performed as part of its definition -- seated, from blocks, with
+    a safety bar -- and never say how much the variation is worth.
+    """
+
+    ASSISTED = "assisted"
+    BLOCK_SUPPORTED = "block_supported"
+    COMPETITION_TOUCH_POINT = "competition_touch_point"
+    FEET_ELEVATED = "feet_elevated"
+    FEET_FIXED = "feet_fixed"
+    HAND_SPACING_REDUCED = "hand_spacing_reduced"
+    HAND_SPACING_WIDE = "hand_spacing_wide"
+    KNEE_PADDED = "knee_padded"
+    SAFETY_BARS = "safety_bars"
+    SEATED = "seated"
+    SHORT_RANGE_OF_MOTION = "short_range_of_motion"
+    TOUCH_AND_GO = "touch_and_go"
+    UNKNOWN = "unknown"
+
+
+class AliasSourceSystem(StrEnum):
+    """Well-known namespaces for source-specific exercise aliases.
+
+    This is *not* a closed vocabulary for the persisted
+    ``exercise_alias.source_system`` column, which is free text so that a future
+    adapter can contribute a new namespace without a canonical schema change.
+    These members exist so that PSD's own artifacts can be validated against the
+    namespaces it ships with, and so a CLI reader can spell them correctly.
+    """
+
+    PSD_REGISTRY = "psd_registry"
+    HEVY = "hevy"
+    STRONG = "strong"
+    TRAINHEROIC = "trainheroic"
+    GENERIC_CSV = "generic_csv"
+    SPREADSHEET = "spreadsheet"
+
+
+class ResolutionStatus(StrEnum):
+    """How far a raw source label could be resolved.
+
+    The ladder is deliberately explicit. ``EXACT_CANONICAL`` and
+    ``RESOLVED_ALIAS`` name exactly one canonical exercise; ``PARTIAL_FAMILY``
+    names only a parent lift; ``AMBIGUOUS`` names several defensible candidates;
+    ``UNMAPPED`` admits nothing. Coverage is never improved by promoting a
+    ``PARTIAL_FAMILY`` or ``AMBIGUOUS`` result to a resolved one, because a
+    confident wrong mapping is worse than an explicit gap.
+    """
+
+    EXACT_CANONICAL = "exact_canonical"
+    RESOLVED_ALIAS = "resolved_alias"
+    PARTIAL_FAMILY = "partial_family"
+    AMBIGUOUS = "ambiguous"
+    UNMAPPED = "unmapped"
+
+
+class ResolutionMethod(StrEnum):
+    """Which stage of the pipeline produced the outcome.
+
+    Recorded so that a resolved mapping can be audited: a label that resolved
+    because an alias registry entry matched is a weaker claim than a label that
+    already *was* the canonical identity.
+    """
+
+    CANONICAL_IDENTITY = "canonical_identity"
+    REGISTERED_ALIAS = "registered_alias"
+    CROSS_SOURCE_ALIAS = "cross_source_alias"
+    STRUCTURED_INTERPRETATION = "structured_interpretation"
+    #: The lookup found an exercise, but the source phrased the label as a
+    #: question, so the answer is recorded as an ambiguity rather than a mapping.
+    QUESTION_FORM = "question_form"
+    GENERIC_QUALIFIER = "generic_qualifier"
+    FAMILY_KEYWORD = "family_keyword"
+    CURATED_AMBIGUOUS = "curated_ambiguous"
+    NO_MATCH = "no_match"
+
+
+class AmbiguityReason(StrEnum):
+    """Why a label was not forced into a canonical exercise.
+
+    ``UNKNOWN_SOURCE_TAXONOMY`` means the registry has never seen the label.
+    The others mean the registry *has* seen it and is recording, on purpose,
+    that the source did not say enough.
+    """
+
+    UNSPECIFIED_VARIATION = "unspecified_variation"
+    UNSPECIFIED_MACHINE = "unspecified_machine"
+    UNSPECIFIED_IMPLEMENT = "unspecified_implement"
+    MULTIPLE_DEFENSIBLE_MATCHES = "multiple_defensible_matches"
+    QUESTION_FORM_LABEL = "question_form_label"
+    CONFLICTING_ALIAS_BINDINGS = "conflicting_alias_bindings"
+    UNKNOWN_SOURCE_TAXONOMY = "unknown_source_taxonomy"
+
+
+#: Identifiers of the deterministic text-normalization rules, in application order.
+#:
+#: Declared here rather than in the normalizer so that the controlled-vocabulary
+#: registry stays the single authority for every enumerated column value, and so
+#: the declarative validator can check a persisted ``normalization_rules`` list
+#: without importing the ontology.
+TEXT_NORMALIZATION_RULES: Final[tuple[str, ...]] = (
+    "unicode_nfkc",
+    "unicode_casefold",
+    "unicode_nfkc_recheck",
+    "strip_diacritics",
+    "punctuation_to_space",
+    "collapse_whitespace",
+    "expand_abbreviation",
+    "fold_plural",
+    "join_compound",
+    "question_form",
+)
 
 
 class LiftType(StrEnum):
@@ -543,6 +821,19 @@ VOCABULARIES: Final[dict[str, tuple[str, ...]]] = {
     "program_modification_kind": tuple(member.value for member in ProgramModificationKind),
     "parent_lift": tuple(member.value for member in ParentLift),
     "specificity_level": tuple(member.value for member in SpecificityLevel),
+    "stance": tuple(member.value for member in Stance),
+    "grip": tuple(member.value for member in Grip),
+    "range_of_motion": tuple(member.value for member in RangeOfMotion),
+    "pause_rule": tuple(member.value for member in PauseRule),
+    "tempo": tuple(member.value for member in TempoPattern),
+    "bar_type": tuple(member.value for member in BarType),
+    "equipment": tuple(member.value for member in ExerciseEquipment),
+    "configuration_flag": tuple(member.value for member in ConfigurationFlag),
+    "alias_source_system": tuple(member.value for member in AliasSourceSystem),
+    "resolution_status": tuple(member.value for member in ResolutionStatus),
+    "resolution_method": tuple(member.value for member in ResolutionMethod),
+    "ambiguity_reason": tuple(member.value for member in AmbiguityReason),
+    "text_rule": TEXT_NORMALIZATION_RULES,
     "laterality": tuple(member.value for member in Laterality),
     "lift_type": tuple(member.value for member in LiftType),
     "observation_type": tuple(member.value for member in ObservationType),

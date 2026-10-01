@@ -24,7 +24,7 @@ from typing import Self
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from psd.schema.vocabulary import MissingnessReason, QualityFlag
+from psd.schema.vocabulary import ConfigurationFlag, MissingnessReason, QualityFlag
 from psd.timeutil import require_aware
 
 __all__ = (
@@ -34,6 +34,7 @@ __all__ = (
     "EventRecord",
     "ProvenancedRecord",
     "TemporalProvenance",
+    "normalize_configuration_flags",
     "normalize_quality_flags",
     "normalize_timestamp",
 )
@@ -58,6 +59,21 @@ def normalize_quality_flags(value: tuple[QualityFlag, ...] | list[str]) -> tuple
     order a source listed them in.
     """
     return tuple(sorted({QualityFlag(str(flag)) for flag in value}, key=lambda flag: flag.value))
+
+
+def normalize_configuration_flags(
+    value: tuple[ConfigurationFlag, ...] | list[str],
+) -> tuple[ConfigurationFlag, ...]:
+    """Return exercise configuration flags as a sorted, de-duplicated tuple.
+
+    The same ordering guarantee as :func:`normalize_quality_flags`, for the same
+    reason: an exercise authored as ``(seated, feet_elevated)`` and one authored
+    as ``(feet_elevated, seated)`` are the same exercise and must serialize to
+    the same bytes.
+    """
+    return tuple(
+        sorted({ConfigurationFlag(str(flag)) for flag in value}, key=lambda flag: flag.value)
+    )
 
 
 class ProvenancedRecord(BaseModel):

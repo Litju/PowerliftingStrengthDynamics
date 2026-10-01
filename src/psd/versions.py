@@ -33,9 +33,11 @@ from dataclasses import dataclass
 from typing import Self
 
 __all__ = (
+    "ALIAS_REGISTRY_VERSION",
     "CANONICAL_SCHEMA_NAME",
     "ID_SCHEME",
     "MANIFEST_VERSION",
+    "ONTOLOGY_VERSION",
     "SCHEMA_VERSION",
     "SchemaVersion",
     "SchemaVersionError",
@@ -127,10 +129,33 @@ class SchemaVersionError(ValueError):
 
 
 #: Version of the canonical Arrow/Parquet athlete-history schema.
-SCHEMA_VERSION = SchemaVersion(series="psd-canonical", major=0, minor=1, patch=0)
+#:
+#: ``0.2.0`` is a minor, additive step: it adds the ``exercise_normalization``
+#: table and tightens the exercise descriptor columns from free text to
+#: controlled vocabularies. The persisted Arrow types of the tightened columns
+#: are unchanged (``string`` before and after), so existing artifacts remain
+#: readable and the version policy in this module classifies the change as
+#: additive rather than breaking.
+SCHEMA_VERSION = SchemaVersion(series="psd-canonical", major=0, minor=2, patch=0)
 
 #: Version of the dataset/provenance manifest contract.
 MANIFEST_VERSION = SchemaVersion(series="psd-manifest", major=0, minor=1, patch=0)
+
+#: Version of the exercise ontology: the canonical exercise identities and their
+#: observable descriptors.
+#:
+#: Tracked separately from :data:`SCHEMA_VERSION` because the ontology evolves on
+#: a different cadence from the athlete-history tables, and because a consumer
+#: must be able to ask "which vocabulary was this label resolved against?"
+#: without the canonical schema changing.
+ONTOLOGY_VERSION = SchemaVersion(series="psd-ontology", major=0, minor=1, patch=0)
+
+#: Version of the source-alias registry.
+#:
+#: Tracked separately from :data:`ONTOLOGY_VERSION` on purpose: a new alias for an
+#: existing exercise, or a new source namespace, must be able to ship without
+#: claiming that a canonical exercise identity changed.
+ALIAS_REGISTRY_VERSION = SchemaVersion(series="psd-ontology-alias", major=0, minor=1, patch=0)
 
 #: Deterministic identifier scheme. Bump on any change to identifier derivation.
 ID_SCHEME = "psd-ids-v1"

@@ -46,17 +46,25 @@ from psd.schema.registry import table_names
 from psd.schema.vocabulary import (
     AttemptOrderBasis,
     AttemptResult,
+    BarType,
     CompetitionResultKind,
     EquipmentClass,
     EventTimePrecision,
+    ExerciseEquipment,
+    Grip,
     IdentityLinkMethod,
     IdentityStatus,
     ImplementType,
     Laterality,
     LiftType,
     ParentLift,
+    PauseRule,
+    RangeOfMotion,
+    ResolutionStatus,
     SexCategory,
     SpecificityLevel,
+    Stance,
+    TempoPattern,
 )
 from psd.units import MassUnit, normalize_mass
 
@@ -291,75 +299,121 @@ def add_athlete(
     )
 
 
+#: ``(key, canonical name, descriptors)`` for the exercises the fixtures use.
+#: This is a mechanical migration of the previous toy vocabulary onto the new
+#: controlled-vocabulary columns; it is replaced by the shared ontology registry
+#: in the following commit.
+FIXTURE_EXERCISE_DESCRIPTORS: tuple[tuple[str, str, dict[str, Any]], ...] = (
+    (
+        "squat",
+        "Squat",
+        {
+            "parent_lift": ParentLift.SQUAT,
+            "specificity_level": SpecificityLevel.COMPETITION_LIFT,
+            "implement": ImplementType.BARBELL,
+            "bar_type": BarType.OLYMPIC_BAR,
+            "equipment": ExerciseEquipment.NONE,
+            "range_of_motion": RangeOfMotion.COMPETITION,
+            "pause_rule": PauseRule.COMPETITION,
+        },
+    ),
+    (
+        "bench",
+        "Bench Press",
+        {
+            "parent_lift": ParentLift.BENCH,
+            "specificity_level": SpecificityLevel.COMPETITION_LIFT,
+            "implement": ImplementType.BARBELL,
+            "bar_type": BarType.OLYMPIC_BAR,
+            "equipment": ExerciseEquipment.FLAT_BENCH,
+            "range_of_motion": RangeOfMotion.COMPETITION,
+            "pause_rule": PauseRule.COMPETITION,
+        },
+    ),
+    (
+        "deadlift",
+        "Deadlift",
+        {
+            "parent_lift": ParentLift.DEADLIFT,
+            "specificity_level": SpecificityLevel.COMPETITION_LIFT,
+            "implement": ImplementType.BARBELL,
+            "bar_type": BarType.OLYMPIC_BAR,
+            "equipment": ExerciseEquipment.NONE,
+            "range_of_motion": RangeOfMotion.COMPETITION,
+            "pause_rule": PauseRule.COMPETITION,
+        },
+    ),
+    (
+        "pause_bench",
+        "Paused Bench Press",
+        {
+            "parent_lift": ParentLift.BENCH,
+            "specificity_level": SpecificityLevel.COMPETITION_VARIATION,
+            "implement": ImplementType.BARBELL,
+            "bar_type": BarType.OLYMPIC_BAR,
+            "equipment": ExerciseEquipment.FLAT_BENCH,
+            "range_of_motion": RangeOfMotion.COMPETITION,
+            "pause_rule": PauseRule.BRIEF,
+        },
+    ),
+    (
+        "rdl",
+        "Romanian Deadlift",
+        {
+            "parent_lift": ParentLift.DEADLIFT,
+            "specificity_level": SpecificityLevel.SPORT_SPECIFIC,
+            "implement": ImplementType.BARBELL,
+            "bar_type": BarType.OLYMPIC_BAR,
+            "equipment": ExerciseEquipment.NONE,
+            "range_of_motion": RangeOfMotion.PARTIAL,
+            "pause_rule": PauseRule.NONE,
+        },
+    ),
+    (
+        "lateral_raise",
+        "Lateral Raise",
+        {
+            "parent_lift": ParentLift.ACCESSORY,
+            "specificity_level": SpecificityLevel.ACCESSORY,
+            "implement": ImplementType.DUMBBELL,
+            "bar_type": BarType.NOT_APPLICABLE,
+            "equipment": ExerciseEquipment.NONE,
+            "range_of_motion": RangeOfMotion.PARTIAL,
+            "pause_rule": PauseRule.NONE,
+        },
+    ),
+)
+
+
 def add_exercises(builder: HistoryBuilder) -> dict[str, ExerciseDefinitionRecord]:
     """Add the canonical exercise vocabulary and return it by short name."""
 
-    definitions: tuple[tuple[str, str, ParentLift, SpecificityLevel, bool], ...] = (
-        ("squat", "Competition Squat", ParentLift.SQUAT, SpecificityLevel.COMPETITION_LIFT, False),
-        (
-            "bench",
-            "Competition Bench Press",
-            ParentLift.BENCH,
-            SpecificityLevel.COMPETITION_LIFT,
-            False,
-        ),
-        (
-            "deadlift",
-            "Competition Deadlift",
-            ParentLift.DEADLIFT,
-            SpecificityLevel.COMPETITION_LIFT,
-            False,
-        ),
-        (
-            "pause_bench",
-            "Paused Bench Press",
-            ParentLift.BENCH,
-            SpecificityLevel.COMPETITION_VARIATION,
-            True,
-        ),
-        (
-            "rdl",
-            "Romanian Deadlift",
-            ParentLift.DEADLIFT,
-            SpecificityLevel.SPORT_SPECIFIC,
-            False,
-        ),
-        (
-            "lateral_raise",
-            "Lateral Raise",
-            ParentLift.ACCESSORY,
-            SpecificityLevel.ACCESSORY,
-            False,
-        ),
-    )
     exercises: dict[str, ExerciseDefinitionRecord] = {}
-    for name, canonical_name, parent_lift, specificity, is_paused in definitions:
-        exercise_id = make_id(IdPrefix.EXERCISE_DEFINITION, name)
-        exercises[name] = builder.add(
-            "exercise_definition",
-            ExerciseDefinitionRecord(
-                exercise_id=exercise_id,
-                canonical_name=canonical_name,
-                parent_lift=parent_lift,
-                specificity_level=specificity,
-                implement=ImplementType.BARBELL,
-                laterality=Laterality.BILATERAL,
-                range_of_motion="competition"
-                if specificity
-                in (SpecificityLevel.COMPETITION_LIFT, SpecificityLevel.COMPETITION_VARIATION)
-                else None,
-                pause=is_paused,
-                **builder.provenance(source_record_key=name),
-            ),
+    for key, canonical_name, descriptors in FIXTURE_EXERCISE_DESCRIPTORS:
+        record = ExerciseDefinitionRecord(
+            exercise_id=make_id(IdPrefix.EXERCISE_DEFINITION, key),
+            canonical_key=key,
+            canonical_name=canonical_name,
+            laterality=Laterality.BILATERAL,
+            stance=Stance.NOT_SPECIFIED,
+            grip=Grip.NOT_SPECIFIED,
+            tempo=TempoPattern.NOT_SPECIFIED,
+            **builder.provenance(source_record_key=key),
+            **descriptors,
         )
+        exercises[key] = builder.add("exercise_definition", record)
         builder.add(
             "exercise_alias",
             ExerciseAliasRecord(
-                exercise_alias_id=make_id(IdPrefix.EXERCISE_ALIAS, name),
-                exercise_id=exercise_id,
+                exercise_alias_id=make_id(IdPrefix.EXERCISE_ALIAS, key),
+                exercise_id=record.exercise_id,
+                source_system="hevy",
                 alias_raw=canonical_name,
-                alias_normalized=name,
-                **builder.provenance(source_record_key=name),
+                alias_normalized=key,
+                mapping_status=ResolutionStatus.RESOLVED_ALIAS,
+                mapping_version="psd-ontology-alias/0.1.0",
+                ontology_version="psd-ontology/0.1.0",
+                **builder.provenance(source_record_key=key),
             ),
         )
     return exercises

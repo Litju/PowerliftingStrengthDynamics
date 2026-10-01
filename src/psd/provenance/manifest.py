@@ -51,6 +51,10 @@ class DatasetKind(StrEnum):
     PROSPECTIVE_TRAINING = "prospective_training"
     SYNTHETIC = "synthetic"
     MIXED = "mixed"
+    #: A versioned reference artifact such as the exercise ontology: vocabulary
+    #: and structure, never observations about an athlete. A reference dataset
+    #: cites no sources because it was authored, not ingested.
+    REFERENCE = "reference"
 
 
 class ArtifactRef(BaseModel):
@@ -200,11 +204,18 @@ class DatasetManifest(BaseModel):
         if (
             self.dataset_kind is not DatasetKind.SYNTHETIC
             and self.dataset_kind is not DatasetKind.MIXED
+            and self.dataset_kind is not DatasetKind.REFERENCE
             and SourceNature.SYNTHETIC in natures
         ):
             msg = (
                 f"Dataset kind {self.dataset_kind.value!r} cannot cite synthetic sources; "
                 "PSD keeps real and synthetic regimes explicitly separate."
+            )
+            raise ValueError(msg)
+        if self.dataset_kind is DatasetKind.REFERENCE and self.sources:
+            msg = (
+                "A reference dataset cites no sources: it describes a versioned vocabulary, not "
+                "observations ingested from an external system."
             )
             raise ValueError(msg)
 

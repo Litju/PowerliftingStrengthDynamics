@@ -63,6 +63,7 @@ class IdPrefix(StrEnum):
     PROVENANCE = "prv"
     EXERCISE_DEFINITION = "exd"
     EXERCISE_ALIAS = "exa"
+    EXERCISE_NORMALIZATION = "exn"
     PROGRAM = "prg"
     PROGRAM_VERSION = "pver"
     PROGRAM_MODIFICATION = "pmod"

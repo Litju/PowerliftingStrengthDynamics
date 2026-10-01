@@ -19,6 +19,7 @@ from psd.cli.inspect_cmd import app as inspect_app
 from psd.cli.main import app as root_app
 from psd.cli.paths_cmd import app as paths_app
 from psd.paths import DATA_ROOT_ENV_VAR, resolve_within_data_root
+from psd.schema.registry import table_names
 
 runner = CliRunner()
 
@@ -123,7 +124,7 @@ def test_root_cli_exposes_the_v0_command_surface() -> None:
 def test_schema_version_command() -> None:
     result = runner.invoke(root_app, ["schema", "version"])
     assert result.exit_code == 0, result.output
-    assert "psd-canonical/0.1.0" in result.output
+    assert "psd-canonical/0.2.0" in result.output
 
 
 def test_schema_list_command() -> None:
@@ -157,8 +158,8 @@ def test_schema_dump_writes_a_document(tmp_path: Path) -> None:
     result = runner.invoke(root_app, ["schema", "dump", "--out", str(out)])
     assert result.exit_code == 0, result.output
     payload = json.loads(out.read_text(encoding="utf-8"))
-    assert payload["schema_version"] == "psd-canonical/0.1.0"
-    assert len(payload["tables"]) == 24
+    assert payload["schema_version"] == "psd-canonical/0.2.0"
+    assert len(payload["tables"]) == len(table_names())
 
 
 def test_schema_vocabularies_command() -> None:
@@ -204,8 +205,8 @@ def test_canonical_build_verify_inspect_validate(tmp_path: Path) -> None:
     manifest = runner.invoke(canonical_app, ["manifest", relative])
     assert manifest.exit_code == 0, manifest.output
     payload = json.loads(manifest.output)
-    assert payload["schema_version"] == "psd-canonical/0.1.0"
-    assert len(payload["artifacts"]) == 24
+    assert payload["schema_version"] == "psd-canonical/0.2.0"
+    assert len(payload["artifacts"]) == len(table_names())
 
     tables = runner.invoke(inspect_app, ["tables", relative])
     assert tables.exit_code == 0, tables.output
