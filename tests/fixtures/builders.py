@@ -23,6 +23,8 @@ from typing import Any, TypeVar, cast
 
 from pydantic import BaseModel
 
+from psd.ontology import default_ontology
+from psd.ontology.records import alias_records, definition_record_for
 from psd.provenance.sources import (
     ConsentBasis,
     DataRegime,
@@ -37,40 +39,30 @@ from psd.schema.models import (
     CompetitionAttemptRecord,
     CompetitionRecord,
     CompetitionReportedResultRecord,
-    ExerciseAliasRecord,
     ExerciseDefinitionRecord,
     ProgramRecord,
     ProgramVersionRecord,
 )
 from psd.schema.registry import table_names
 from psd.schema.vocabulary import (
+    AliasSourceSystem,
     AttemptOrderBasis,
     AttemptResult,
-    BarType,
     CompetitionResultKind,
     EquipmentClass,
     EventTimePrecision,
-    ExerciseEquipment,
-    Grip,
     IdentityLinkMethod,
     IdentityStatus,
-    ImplementType,
-    Laterality,
     LiftType,
-    ParentLift,
-    PauseRule,
-    RangeOfMotion,
-    ResolutionStatus,
     SexCategory,
-    SpecificityLevel,
-    Stance,
-    TempoPattern,
 )
 from psd.units import MassUnit, normalize_mass
 
 __all__ = (
     "ATHLETE_ID",
     "BASE_INSTANT",
+    "FIXTURE_ALIAS_SOURCE_SYSTEM",
+    "FIXTURE_EXERCISE_KEYS",
     "HISTORY_START",
     "HistoryBuilder",
     "SourceIds",
@@ -299,124 +291,88 @@ def add_athlete(
     )
 
 
-#: ``(key, canonical name, descriptors)`` for the exercises the fixtures use.
-#: This is a mechanical migration of the previous toy vocabulary onto the new
-#: controlled-vocabulary columns; it is replaced by the shared ontology registry
-#: in the following commit.
-FIXTURE_EXERCISE_DESCRIPTORS: tuple[tuple[str, str, dict[str, Any]], ...] = (
-    (
-        "squat",
-        "Squat",
-        {
-            "parent_lift": ParentLift.SQUAT,
-            "specificity_level": SpecificityLevel.COMPETITION_LIFT,
-            "implement": ImplementType.BARBELL,
-            "bar_type": BarType.OLYMPIC_BAR,
-            "equipment": ExerciseEquipment.NONE,
-            "range_of_motion": RangeOfMotion.COMPETITION,
-            "pause_rule": PauseRule.COMPETITION,
-        },
-    ),
-    (
-        "bench",
-        "Bench Press",
-        {
-            "parent_lift": ParentLift.BENCH,
-            "specificity_level": SpecificityLevel.COMPETITION_LIFT,
-            "implement": ImplementType.BARBELL,
-            "bar_type": BarType.OLYMPIC_BAR,
-            "equipment": ExerciseEquipment.FLAT_BENCH,
-            "range_of_motion": RangeOfMotion.COMPETITION,
-            "pause_rule": PauseRule.COMPETITION,
-        },
-    ),
-    (
-        "deadlift",
-        "Deadlift",
-        {
-            "parent_lift": ParentLift.DEADLIFT,
-            "specificity_level": SpecificityLevel.COMPETITION_LIFT,
-            "implement": ImplementType.BARBELL,
-            "bar_type": BarType.OLYMPIC_BAR,
-            "equipment": ExerciseEquipment.NONE,
-            "range_of_motion": RangeOfMotion.COMPETITION,
-            "pause_rule": PauseRule.COMPETITION,
-        },
-    ),
-    (
-        "pause_bench",
-        "Paused Bench Press",
-        {
-            "parent_lift": ParentLift.BENCH,
-            "specificity_level": SpecificityLevel.COMPETITION_VARIATION,
-            "implement": ImplementType.BARBELL,
-            "bar_type": BarType.OLYMPIC_BAR,
-            "equipment": ExerciseEquipment.FLAT_BENCH,
-            "range_of_motion": RangeOfMotion.COMPETITION,
-            "pause_rule": PauseRule.BRIEF,
-        },
-    ),
-    (
-        "rdl",
-        "Romanian Deadlift",
-        {
-            "parent_lift": ParentLift.DEADLIFT,
-            "specificity_level": SpecificityLevel.SPORT_SPECIFIC,
-            "implement": ImplementType.BARBELL,
-            "bar_type": BarType.OLYMPIC_BAR,
-            "equipment": ExerciseEquipment.NONE,
-            "range_of_motion": RangeOfMotion.PARTIAL,
-            "pause_rule": PauseRule.NONE,
-        },
-    ),
-    (
-        "lateral_raise",
-        "Lateral Raise",
-        {
-            "parent_lift": ParentLift.ACCESSORY,
-            "specificity_level": SpecificityLevel.ACCESSORY,
-            "implement": ImplementType.DUMBBELL,
-            "bar_type": BarType.NOT_APPLICABLE,
-            "equipment": ExerciseEquipment.NONE,
-            "range_of_motion": RangeOfMotion.PARTIAL,
-            "pause_rule": PauseRule.NONE,
-        },
-    ),
+#: Canonical ontology keys the fixtures exercise. These are ontology keys, not a
+#: fixture-local vocabulary: every descriptor of every exercise below comes from
+#: :mod:`psd.ontology.catalog`.
+FIXTURE_EXERCISE_KEYS: tuple[str, ...] = (
+    "bench",
+    "deadlift",
+    "lateral_raise",
+    "pause_bench",
+    "rdl",
+    "squat",
 )
 
+#: Namespace the fixture alias rows are attributed to.
+FIXTURE_ALIAS_SOURCE_SYSTEM: str = AliasSourceSystem.HEVY.value
 
-def add_exercises(builder: HistoryBuilder) -> dict[str, ExerciseDefinitionRecord]:
-    """Add the canonical exercise vocabulary and return it by short name."""
 
+def add_exercises(
+    builder: HistoryBuilder,
+    *,
+    keys: Sequence[str] = FIXTURE_EXERCISE_KEYS,
+    alias_source_system: str = FIXTURE_ALIAS_SOURCE_SYSTEM,
+) -> dict[str, ExerciseDefinitionRecord]:
+    """Add the PSD exercise ontology's canonical vocabulary to a builder.
+
+    The fixtures deliberately hold **no** exercise vocabulary of their own. They ask
+    the ontology for the exercises they exercise and re-stamp the rows with the
+    fixture's own provenance, so a canonical history can never drift from the
+    ontology: adding a descriptor to an exercise in ``psd.ontology.catalog`` changes
+    every fixture at once, and two vocabularies can never disagree.
+
+    Args:
+        builder: Target builder.
+        keys: Canonical ontology keys to include.
+        alias_source_system: Namespace the alias rows are attributed to.
+
+    Returns:
+        The canonical definition records keyed by ontology key.
+    """
+    ontology = default_ontology()
+    stamp = builder.ingested_at
     exercises: dict[str, ExerciseDefinitionRecord] = {}
-    for key, canonical_name, descriptors in FIXTURE_EXERCISE_DESCRIPTORS:
-        record = ExerciseDefinitionRecord(
-            exercise_id=make_id(IdPrefix.EXERCISE_DEFINITION, key),
-            canonical_key=key,
-            canonical_name=canonical_name,
-            laterality=Laterality.BILATERAL,
-            stance=Stance.NOT_SPECIFIED,
-            grip=Grip.NOT_SPECIFIED,
-            tempo=TempoPattern.NOT_SPECIFIED,
-            **builder.provenance(source_record_key=key),
-            **descriptors,
-        )
-        exercises[key] = builder.add("exercise_definition", record)
-        builder.add(
-            "exercise_alias",
-            ExerciseAliasRecord(
-                exercise_alias_id=make_id(IdPrefix.EXERCISE_ALIAS, key),
-                exercise_id=record.exercise_id,
-                source_system="hevy",
-                alias_raw=canonical_name,
-                alias_normalized=key,
-                mapping_status=ResolutionStatus.RESOLVED_ALIAS,
-                mapping_version="psd-ontology-alias/0.1.0",
-                ontology_version="psd-ontology/0.1.0",
-                **builder.provenance(source_record_key=key),
+    for key in sorted(keys):
+        exercises[key] = builder.add(
+            "exercise_definition",
+            _reprovenanced(
+                definition_record_for(
+                    ontology, key, source_id=builder.source_id, ingested_at=stamp
+                ),
+                builder,
+                source_record_key=f"exercise:{key}",
             ),
         )
+    builder.extend(
+        "exercise_alias",
+        [
+            _reprovenanced(
+                alias,
+                builder,
+                source_record_key=f"alias:{alias.source_system}:{alias.alias_raw}",
+            )
+            for alias in alias_records(
+                ontology,
+                ingested_at=stamp,
+                source_systems=(alias_source_system,),
+                exercise_keys=keys,
+                source_id=builder.source_id,
+            )
+        ],
+    )
     return exercises
+
+
+def _reprovenanced[RecordT: BaseModel](
+    record: RecordT, builder: HistoryBuilder, **overrides: Any
+) -> RecordT:
+    """Return *record* re-stamped with the builder's provenance.
+
+    The re-stamp goes through ``model_validate`` rather than a mutation, so the
+    record is re-checked against its own contract exactly as a real ingest would.
+    """
+    payload = {**record.model_dump(), **builder.provenance(), **overrides}
+    return type(record).model_validate(payload)
 
 
 def add_program(
