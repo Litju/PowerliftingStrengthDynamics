@@ -325,7 +325,7 @@ class ExerciseOntology:
         self._identity_texts = _index_identity_texts(self._specs)
         self._aliases = _build_aliases(aliases, set(self._specs))
         self._alias_index = _index_aliases(self._aliases)
-        self._curated = _index_curated(curated)
+        self._curated = _index_curated(curated, set(self._specs))
         _reject_curated_alias_overlap(self._curated, self._alias_index)
 
     # -- introspection ------------------------------------------------------
@@ -535,16 +535,12 @@ class ExerciseOntology:
         )
 
     def _from_curated(self, base: _Base, curated: _CuratedAmbiguity) -> NormalizationOutcome:
-        """Turn a curated refusal into an outcome, validating its candidates."""
+        """Turn a curated refusal into an outcome.
+
+        Candidate existence was checked at construction, so this only has to order
+        the candidates deterministically.
+        """
         spec = curated.spec
-        candidates = tuple(sorted(spec.candidate_keys))
-        missing = [key for key in candidates if key not in self._specs]
-        if missing:
-            msg = (
-                f"Curated ambiguity {spec.raw_label!r} names unknown canonical key(s): "
-                f"{', '.join(missing)}."
-            )
-            raise OntologyError(msg)
         return _finish(
             base,
             _Verdict(
@@ -552,7 +548,7 @@ class ExerciseOntology:
                 method=ResolutionMethod.CURATED_AMBIGUOUS,
                 reason=spec.reason,
                 parent_lift=spec.parent_lift,
-                candidates=candidates,
+                candidates=tuple(sorted(spec.candidate_keys)),
             ),
         )
 
@@ -664,8 +660,16 @@ def _index_aliases(bindings: Mapping[str, AliasBinding]) -> Mapping[str, _AliasI
     return index
 
 
-def _index_curated(curated: Sequence[UnresolvedLabelSpec]) -> Mapping[str, _CuratedAmbiguity]:
-    """Index curated refusals by the normalized label they apply to."""
+def _index_curated(
+    curated: Sequence[UnresolvedLabelSpec], keys: set[str]
+) -> Mapping[str, _CuratedAmbiguity]:
+    """Index curated refusals by the normalized label they apply to.
+
+    Candidate exercises are validated here rather than at query time: a refusal that
+    offers a reader a candidate which does not exist is a broken declaration, and
+    finding that out on the first query rather than at construction would make the
+    defect depend on which label happened to be asked about.
+    """
     indexed: dict[str, _CuratedAmbiguity] = {}
     for spec in curated:
         normalized = normalize_label(spec.raw_label).text
@@ -674,6 +678,13 @@ def _index_curated(curated: Sequence[UnresolvedLabelSpec]) -> Mapping[str, _Cura
             raise OntologyError(msg)
         if normalized in indexed:
             msg = f"Duplicate curated ambiguity for normalized label {normalized!r}."
+            raise OntologyError(msg)
+        missing = [key for key in spec.candidate_keys if key not in keys]
+        if missing:
+            msg = (
+                f"Curated ambiguity {spec.raw_label!r} names unknown canonical key(s): "
+                f"{', '.join(sorted(missing))}."
+            )
             raise OntologyError(msg)
         indexed[normalized] = _CuratedAmbiguity(normalized_label=normalized, spec=spec)
     return indexed

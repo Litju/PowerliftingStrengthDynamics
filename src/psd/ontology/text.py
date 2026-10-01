@@ -107,10 +107,18 @@ ABBREVIATIONS: Final[dict[str, tuple[str, ...]]] = {
 #: Joining is what makes "Bench Press", "Benchpress", and "bench-press" one
 #: lookup. It is applied *after* abbreviation expansion so that ``OHP`` becomes
 #: ``overhead press`` and then ``overheadpress``.
+#:
+#: Entries are matched left to right, longest phrase first, and the pass does not
+#: re-examine what it has already emitted. A three-token spelling therefore needs its
+#: own entry rather than relying on a shorter one firing first: ``Lat Pull Down``
+#: joins ``pull down`` into ``pulldown`` and would then be left as ``lat pulldown``.
 COMPOUND_NAMES: Final[tuple[tuple[tuple[str, ...], str], ...]] = (
+    (("lat", "pull", "down"), "latpulldown"),
     (("bench", "press"), "benchpress"),
     (("overhead", "press"), "overheadpress"),
     (("lat", "pulldown"), "latpulldown"),
+    (("pull", "down"), "pulldown"),
+    (("good", "morning"), "goodmorning"),
     (("leg", "press"), "legpress"),
     (("chest", "press"), "chestpress"),
     (("close", "grip"), "closegrip"),
@@ -151,6 +159,7 @@ PLURAL_TO_SINGULAR: Final[dict[str, str]] = {
     "situps": "situp",
     "stepups": "stepup",
     "legpresses": "legpress",
+    "mornings": "morning",
     "goodmornings": "goodmorning",
     "sideplanks": "sideplank",
     "planks": "plank",
@@ -161,8 +170,6 @@ _COMPOUND_BY_LENGTH: Final[dict[int, tuple[tuple[tuple[str, ...], str], ...]]] =
     for size in {len(phrase) for phrase, _replacement in COMPOUND_NAMES}
 }
 _COMPOUND_LENGTHS: Final[tuple[int, ...]] = tuple(sorted(_COMPOUND_BY_LENGTH, reverse=True))
-
-_QUESTION_MARK: Final[str] = "?"
 
 # Every rule identifier this module can emit is declared in the controlled
 # vocabulary, so ``exercise_normalization.normalization_rules`` can be validated
@@ -253,16 +260,23 @@ def normalize_label(raw: str) -> NormalizedLabel:
         rules.append("join_compound")
 
     return NormalizedLabel(
-        text=" ".join(folded_plural),
+        text=" ".join(joined),
         rules=tuple(rules),
         question_form=question_form,
     )
 
 
 def _ends_with_question_mark(text: str) -> bool:
-    """Return whether *text*'s last non-whitespace character is a question mark."""
-    stripped = text.rstrip()
-    return stripped.endswith(_QUESTION_MARK)
+    """Return whether the label's final token is a question.
+
+    Testing the last whitespace-separated token rather than the last character is what
+    makes the answer robust to trailing punctuation: ``Squat ?`` and ``Squat-?-`` both
+    end in a question, and a source that trailed a dash should not silently turn the
+    doubt back into a mapping. Requiring the *final* token is what keeps
+    ``What? Squat`` -- a label that merely contains a question mark -- out of it.
+    """
+    tokens = [token for token in text.split() if token]
+    return bool(tokens) and "?" in tokens[-1]
 
 
 def _expand_abbreviations(tokens: list[str]) -> list[str]:

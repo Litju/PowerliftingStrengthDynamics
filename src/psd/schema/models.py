@@ -84,6 +84,7 @@ from psd.units import (
 )
 
 __all__ = (
+    "STATUS_BY_RESOLUTION_METHOD",
     "AthleteRecord",
     "AthleteSourceLinkRecord",
     "BodyMeasurementRecord",
@@ -107,6 +108,7 @@ __all__ = (
     "ProgramRecord",
     "ProgramVersionRecord",
     "VelocityObservationRecord",
+    "pause_flag_for_rule",
 )
 
 NORMALIZED_MASS_UNIT: Final[str] = MassUnit.KG.value
@@ -653,7 +655,7 @@ _ALIAS_ROW_STATUSES: Final[frozenset[ResolutionStatus]] = frozenset(
 #: Which resolution status each resolution method is allowed to produce.
 #: Enforced so a method can never be recorded as the justification for an outcome it
 #: could not have produced, which is what makes the method column auditable.
-_STATUS_BY_METHOD: Final[Mapping[ResolutionMethod, frozenset[ResolutionStatus]]] = {
+STATUS_BY_RESOLUTION_METHOD: Final[Mapping[ResolutionMethod, frozenset[ResolutionStatus]]] = {
     ResolutionMethod.CANONICAL_IDENTITY: frozenset({ResolutionStatus.EXACT_CANONICAL}),
     ResolutionMethod.REGISTERED_ALIAS: frozenset({ResolutionStatus.RESOLVED_ALIAS}),
     ResolutionMethod.CROSS_SOURCE_ALIAS: frozenset({ResolutionStatus.RESOLVED_ALIAS}),
@@ -689,7 +691,7 @@ def _validate_resolution_ladder(record: ExerciseNormalizationRecord) -> None:
     resolved = status in _RESOLVED_STATUSES
 
     if resolved != (record.exercise_id is not None):
-        verb = "requires" if resolved else "may not"
+        verb = "requires" if resolved else "may not carry"
         msg = (
             f"resolution_status={status.value!r} {verb} an exercise_id; naming a canonical "
             "exercise would be a mapping this outcome did not make"
@@ -747,7 +749,7 @@ def _validate_resolution_evidence(record: ExerciseNormalizationRecord) -> None:
 
 def _validate_resolution_method(record: ExerciseNormalizationRecord) -> None:
     """Check the recorded method could have produced the recorded status."""
-    permitted = _STATUS_BY_METHOD.get(record.resolution_method)
+    permitted = STATUS_BY_RESOLUTION_METHOD.get(record.resolution_method)
     if permitted is None:
         msg = f"Unknown resolution method {record.resolution_method!r}."
         raise ValueError(msg)

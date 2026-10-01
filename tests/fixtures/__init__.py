@@ -29,6 +29,8 @@ from tests.fixtures.adversarial_history import adversarial_history_records, synt
 from tests.fixtures.builders import (
     ATHLETE_ID,
     BASE_INSTANT,
+    FIXTURE_ALIAS_SOURCE_SYSTEM,
+    FIXTURE_EXERCISE_KEYS,
     HISTORY_START,
     HistoryBuilder,
     SourceIds,
@@ -49,6 +51,8 @@ from tests.fixtures.normal_history import normal_history_records
 __all__ = (
     "ATHLETE_ID",
     "BASE_INSTANT",
+    "FIXTURE_ALIAS_SOURCE_SYSTEM",
+    "FIXTURE_EXERCISE_KEYS",
     "HISTORY_START",
     "HistoryBuilder",
     "SourceIds",

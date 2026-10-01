@@ -252,13 +252,16 @@ def build(
     if as_json:
         typer.echo(json.dumps(manifest.model_dump(mode="json"), indent=2, sort_keys=True))
         return
+    # Printed with POSIX separators because that is the form recorded in the manifest
+    # and accepted on either platform, so the line is copy-pasteable from a CI log.
+    portable = Path(target).as_posix()
     typer.echo(f"dataset    {manifest.dataset_id}")
     typer.echo(f"schema     {manifest.schema_version}")
-    typer.echo(f"target     {target}")
+    typer.echo(f"target     {portable}")
     typer.echo(f"exercises  {dataset.row_counts()['exercise_definition']}")
     typer.echo(f"aliases    {dataset.row_counts()['exercise_alias']}")
     typer.echo(f"outcomes   {dataset.row_counts()['exercise_normalization']}")
-    typer.echo("verify     psd canonical verify <target>")
+    typer.echo(f"verify     psd canonical verify {portable}")
 
 
 @app.command("coverage")
