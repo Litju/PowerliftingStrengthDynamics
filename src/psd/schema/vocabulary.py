@@ -572,6 +572,10 @@ VOCABULARIES: Final[dict[str, tuple[str, ...]]] = {
     "mass_unit": ("kg", "lb"),
     "length_unit": ("cm", "in", "m"),
     "measurement_unit": ("kg", "lb", "cm", "in", "m"),
+    "percentage_unit": ("percent", "%"),
+    # A normalized measurement unit can be either a mass/length unit or percent,
+    # depending on the measurement type, so it needs the union.
+    "normalized_measurement_unit": ("kg", "lb", "cm", "in", "m", "percent", "%"),
 }
 
 

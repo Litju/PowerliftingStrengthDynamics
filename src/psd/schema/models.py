@@ -92,6 +92,23 @@ __all__ = (
 
 NORMALIZED_MASS_UNIT: Final[str] = MassUnit.KG.value
 NORMALIZED_LENGTH_UNIT: Final[str] = "cm"
+PERCENT_UNIT: Final[str] = "percent"
+
+LENGTH_TYPES: Final[frozenset[BodyMeasurementType]] = frozenset(
+    {
+        BodyMeasurementType.HEIGHT,
+        BodyMeasurementType.WAIST_CIRCUMFERENCE,
+        BodyMeasurementType.CHEST_CIRCUMFERENCE,
+    }
+)
+
+PERCENTAGE_TYPES: Final[frozenset[BodyMeasurementType]] = frozenset(
+    {
+        BodyMeasurementType.BODY_FAT_PERCENTAGE,
+    }
+)
+
+PERCENTAGE_UNITS: Final[frozenset[str]] = frozenset({"percent", "%"})
 
 RPE_MIN: Final[float] = 0.0
 RPE_MAX: Final[float] = 10.0
@@ -99,6 +116,46 @@ PERCENT_MIN: Final[float] = 0.0
 PERCENT_MAX: Final[float] = 100.0
 ATTEMPT_NUMBERS: Final[tuple[int, ...]] = (1, 2, 3)
 NORMALIZATION_TOLERANCE: Final[float] = 1e-9
+
+
+def _validate_percentage_triplet(
+    *,
+    raw_value: float | None,
+    raw_unit: str | None,
+    normalized: float | None,
+) -> None:
+    """Validate a raw/unit/normalized percentage triplet.
+
+    A percentage is dimensionless, so a source may legitimately report
+    ``14.2`` with no unit at all. The raw value is still required: PSD never
+    synthesizes a measurement.
+    """
+    if raw_value is None:
+        if raw_unit is not None or normalized is not None:
+            msg = "body_measurement: a unit or normalized value requires a raw value."
+            raise ValueError(msg)
+        return
+    if not (PERCENT_MIN < raw_value <= PERCENT_MAX):
+        msg = (
+            f"body_measurement: percentage {raw_value!r} must be within "
+            f"({PERCENT_MIN}, {PERCENT_MAX}]."
+        )
+        raise ValueError(msg)
+    if raw_unit is not None and raw_unit.strip().lower() not in PERCENTAGE_UNITS:
+        msg = (
+            f"body_measurement: unit {raw_unit!r} is not a percentage unit; expected "
+            f"one of {sorted(PERCENTAGE_UNITS)}."
+        )
+        raise ValueError(msg)
+    if normalized is None:
+        msg = "body_measurement: normalized value is required when a raw value is present."
+        raise ValueError(msg)
+    if abs(normalized - raw_value) > NORMALIZATION_TOLERANCE:
+        msg = (
+            f"body_measurement: normalized percentage {normalized!r} disagrees with "
+            f"raw {raw_value!r}."
+        )
+        raise ValueError(msg)
 
 
 # --------------------------------------------------------------------------
@@ -262,17 +319,15 @@ class AthleteSourceLinkRecord(ContextRecord):
 
     @model_validator(mode="after")
     def _check_consistency(self) -> Self:
-        unlinked = {
-            IdentityLinkMethod.UNRESOLVED,
-            IdentityLinkMethod.UNKNOWN,
-        }
+        unlinked = {IdentityLinkMethod.UNRESOLVED, IdentityLinkMethod.UNKNOWN}
         if self.link_method in unlinked and self.link_confidence is not None:
             msg = (
                 f"link_confidence must be null when link_method is "
                 f"{self.link_method.value!r}; an unresolved link has no confidence."
             )
             raise ValueError(msg)
-        if self.link_method is not IdentityLinkMethod.UNKNOWN and self.source_athlete_key is None:
+        if self.link_method not in unlinked and self.source_athlete_key is None:
+            # An unresolved link has, by definition, no key to point at.
             msg = "source_athlete_key is required for every resolved link method."
             raise ValueError(msg)
         return self
@@ -282,13 +337,15 @@ class BodyMeasurementRecord(EventRecord):
     """A body measurement with its raw source value preserved.
 
     Body mass is a first-class observation: it appears in longitudinal models and
-    is frequently the only available covariate for weight-class context.
+    is frequently the only available covariate for weight-class context. Mass and
+    length measurements normalize to kilograms and centimeters; percentage
+    measurements such as body fat normalize to percent.
     """
 
     body_measurement_id: str = Field(min_length=1, max_length=160)
     athlete_id: str = Field(min_length=1, max_length=160)
-    measurement_type: BodyMeasurementType
     measured_at: datetime
+    measurement_type: BodyMeasurementType
     event_time_precision: EventTimePrecision = EventTimePrecision.UNKNOWN
     measurement_context: BodyMassContext = BodyMassContext.UNSPECIFIED
     method: BodyMeasurementMethod = BodyMeasurementMethod.UNKNOWN
@@ -302,12 +359,7 @@ class BodyMeasurementRecord(EventRecord):
         object.__setattr__(
             self, "measured_at", normalize_timestamp(self.measured_at, field="measured_at")
         )
-        length_types = {
-            BodyMeasurementType.HEIGHT,
-            BodyMeasurementType.WAIST_CIRCUMFERENCE,
-            BodyMeasurementType.CHEST_CIRCUMFERENCE,
-        }
-        if self.measurement_type in length_types:
+        if self.measurement_type in LENGTH_TYPES:
             _validate_length_triplet(
                 raw_value=self.raw_value,
                 raw_unit=self.raw_unit,
@@ -316,6 +368,15 @@ class BodyMeasurementRecord(EventRecord):
             )
             if self.value_normalized is not None and self.unit_normalized != NORMALIZED_LENGTH_UNIT:
                 msg = "Length measurements normalize to centimeters."
+                raise ValueError(msg)
+        elif self.measurement_type in PERCENTAGE_TYPES:
+            _validate_percentage_triplet(
+                raw_value=self.raw_value,
+                raw_unit=self.raw_unit,
+                normalized=self.value_normalized,
+            )
+            if self.value_normalized is not None and self.unit_normalized != PERCENT_UNIT:
+                msg = "Percentage measurements normalize to percent."
                 raise ValueError(msg)
         else:
             _validate_mass_triplet(
