@@ -28,8 +28,11 @@ __all__ = (
     "BodyMeasurementType",
     "CompetitionResultKind",
     "EquipmentClass",
+    "EquipmentItem",
+    "EventTimePrecision",
     "IdentityLinkMethod",
     "IdentityStatus",
+    "ImplementType",
     "Laterality",
     "LiftType",
     "MissingnessReason",
@@ -46,8 +49,10 @@ __all__ = (
     "SessionStatus",
     "SessionType",
     "SetStatus",
+    "SexCategory",
     "SpecificityLevel",
     "TestType",
+    "ValueEncoding",
     "VelocityMethod",
     "vocabulary_members",
 )
@@ -439,6 +444,81 @@ class BodyMassContext(StrEnum):
     UNKNOWN = "unknown"
 
 
+class SexCategory(StrEnum):
+    """Source-reported sex category.
+
+    Kept as a reported attribute with the raw source value preserved. PSD makes
+    no claim about how sex category relates to performance, and this field
+    carries no physiological meaning in the benchmark.
+    """
+
+    FEMALE = "female"
+    MALE = "male"
+    INTERSEX = "intersex"
+    OTHER_SELF_DESCRIBED = "other_self_described"
+    NOT_RECORDED = "not_recorded"
+    UNKNOWN = "unknown"
+
+
+class EventTimePrecision(StrEnum):
+    """Granularity of an event timestamp.
+
+    Recorded so that a date-only competition is never silently treated as a
+    midnight-UTC instant of known precision.
+    """
+
+    DATE_ONLY = "date_only"
+    MINUTE = "minute"
+    SECOND = "second"
+    MILLISECOND = "millisecond"
+    UNKNOWN = "unknown"
+
+
+class EquipmentItem(StrEnum):
+    """Equipment whose state changes over an athlete's history."""
+
+    BAR = "bar"
+    PLATES = "plates"
+    SHOES = "shoes"
+    HEEL_RAISERS = "heel_raisers"
+    BELT = "belt"
+    KNEE_SLEEVES = "knee_sleeves"
+    WRIST_WRAPS = "wrist_wraps"
+    SHIRT = "shirt"
+    SUIT = "suit"
+    STOOL = "stool"
+    RACK = "rack"
+    IMPLEMENTS = "implements"
+    MACHINE = "machine"
+    OTHER = "other"
+    UNKNOWN = "unknown"
+
+
+class ImplementType(StrEnum):
+    """Implement used for an exercise."""
+
+    BARBELL = "barbell"
+    PLATE_LOADED_BARBELL = "plate_loaded_barbell"
+    DUMBBELL = "dumbbell"
+    KETTLEBELL = "kettlebell"
+    MACHINE = "machine"
+    CABLE = "cable"
+    BODYWEIGHT = "bodyweight"
+    BAND = "band"
+    SMITH_MACHINE = "smith_machine"
+    SPECIALTY_BAR = "specialty_bar"
+    OTHER = "other"
+    UNKNOWN = "unknown"
+
+
+class ValueEncoding(StrEnum):
+    """How a before/after value in a program modification is encoded."""
+
+    TEXT = "text"
+    NUMBER = "number"
+    JSON = "json"
+
+
 #: Every controlled vocabulary, keyed by the field it constrains.
 VOCABULARIES: Final[dict[str, tuple[str, ...]]] = {
     "missingness_reason": tuple(member.value for member in MissingnessReason),
@@ -469,6 +549,11 @@ VOCABULARIES: Final[dict[str, tuple[str, ...]]] = {
     "body_measurement_type": tuple(member.value for member in BodyMeasurementType),
     "body_measurement_method": tuple(member.value for member in BodyMeasurementMethod),
     "body_mass_context": tuple(member.value for member in BodyMassContext),
+    "sex_category": tuple(member.value for member in SexCategory),
+    "event_time_precision": tuple(member.value for member in EventTimePrecision),
+    "equipment_item": tuple(member.value for member in EquipmentItem),
+    "implement_type": tuple(member.value for member in ImplementType),
+    "value_encoding": tuple(member.value for member in ValueEncoding),
     "mass_unit": ("kg", "lb"),
     "length_unit": ("cm", "in", "m"),
 }

@@ -33,6 +33,11 @@ dependencies = [
   "pydantic-settings>=2.6,<3",
   "scipy>=1.14,<2",
   "typer>=0.12,<1",
+  # PyArrow resolves timezone-aware timestamps through the IANA database, which
+  # the Windows Python distribution does not ship. Without this, writing or
+  # reading any PSD timestamp column fails on Windows with
+  # ZoneInfoNotFoundError: 'No time zone found with key UTC'.
+  "tzdata>=2024.1",
 ]
 
 [project.urls]
@@ -56,6 +61,10 @@ module-root = "src"
 dev = [
   "hypothesis>=6.100,<7",
   "mypy>=1.13,<2",
+  # Community type stubs for PyArrow: PyArrow is the persisted schema boundary
+  # and ships no inline types, so PSD keeps project-wide Pyright strict by
+  # pinning stubs that match the pinned pyarrow major version.
+  "pyarrow-stubs==20.0.0.20260819",
   "pyright>=1.1.390,<2",
   "pytest>=8.3,<9",
   "pytest-cov>=6,<8",
@@ -125,16 +134,9 @@ mark-parentheses = false
 [tool.ruff.lint.pydocstyle]
 convention = "google"
 
-[tool.pyright]
-include = ["src", "tests", "configs"]
-venvPath = "."
-venv = ".venv"
-pythonVersion = "3.12"
-pythonPlatform = "All"
-typeCheckingMode = "strict"
-reportMissingModuleSource = "error"
-reportPrivateImportUsage = false
-
+# Pyright is configured in pyrightconfig.json so that narrowly scoped
+# `overrides` can confine the unavoidable unknown-type flow from PyArrow, which
+# ships no type stubs, to the modules that name Arrow types in public signatures.
 [tool.pytest.ini_options]
 minversion = "8.3"
 testpaths = ["tests"]

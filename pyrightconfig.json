@@ -1,0 +1,11 @@
+{
+  "include": ["src", "tests", "configs"],
+  "exclude": ["**/__pycache__", "**/.venv", "**/dist", "**/build", "**/.pytest_cache"],
+  "venvPath": ".",
+  "venv": ".venv",
+  "pythonVersion": "3.12",
+  "pythonPlatform": "All",
+  "typeCheckingMode": "strict",
+  "reportMissingModuleSource": "error",
+  "reportMissingTypeStubs": "none"
+}
