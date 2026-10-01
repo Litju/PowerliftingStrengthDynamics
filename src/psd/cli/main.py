@@ -12,6 +12,7 @@ from psd import __version__
 from psd.cli.canonical_cmd import app as canonical_app
 from psd.cli.inspect_cmd import app as inspect_app
 from psd.cli.inspect_cmd import register_validate
+from psd.cli.ontology_cmd import app as ontology_app
 from psd.cli.paths_cmd import app as paths_app
 from psd.cli.schema_cmd import app as schema_app
 
@@ -23,6 +24,7 @@ app = typer.Typer(
 )
 app.add_typer(canonical_app, name="canonical")
 app.add_typer(inspect_app, name="inspect")
+app.add_typer(ontology_app, name="ontology")
 app.add_typer(paths_app, name="paths")
 app.add_typer(schema_app, name="schema")
 register_validate(app)
