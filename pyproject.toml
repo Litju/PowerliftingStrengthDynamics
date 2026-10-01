@@ -98,10 +98,25 @@ select = [
 ]
 ignore = [
   "ANN401", # Any-type is rejected explicitly by pyright strict.
+  # Domain exceptions carry contextual messages that only make sense at the
+  # raise site (offending value, field name, both versions). Moving them into
+  # exception classes would hide the evidence needed to debug a bad artifact.
+  "TRY003",
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**/*.py" = ["ARG001", "ARG002", "PLR0913", "PLR2004", "SLF001"]
+"src/psd/cli/*.py" = [
+  "B008", # Typer's documented pattern: declare options in parameter defaults.
+]
+"tests/**/*.py" = [
+  "ARG001",
+  "ARG002",
+  "PLR0913",
+  "PLR2004",
+  "SLF001",
+  # Naive datetimes are constructed deliberately to prove they are rejected.
+  "DTZ001",
+]
 
 [tool.ruff.lint.flake8-pytest-style]
 fixture-parentheses = false
