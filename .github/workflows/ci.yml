@@ -1,0 +1,112 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  UV_FROZEN: "1"
+  UV_NO_PROGRESS: "1"
+
+jobs:
+  quality:
+    name: ${{ matrix.os }} / py${{ matrix.python-version }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+        python-version: ["3.12"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          # Pinned to match `build-system.requires` in pyproject.toml so CI
+          # exercises the same build backend as local development.
+          version: "0.12.4"
+          enable-cache: true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Resolve interpreter
+        run: uv python install ${{ matrix.python-version }}
+
+      - name: Install locked dependencies
+        run: uv sync --locked --all-groups
+
+      - name: Lint (ruff check)
+        run: uv run ruff check .
+
+      - name: Format check (ruff format --check)
+        run: uv run ruff format --check .
+
+      - name: Static types (pyright strict)
+        run: uv run pyright
+
+      - name: Tests
+        run: uv run pytest --cov=psd --cov-report=term-missing
+
+      - name: Build distributions
+        run: uv build
+
+      - name: Upload distributions
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ matrix.os }}-py${{ matrix.python-version }}
+          path: dist/
+          if-no-files-found: error
+
+  wheel-smoke:
+    name: wheel smoke / ${{ matrix.os }} / py${{ matrix.python-version }}
+    runs-on: ${{ matrix.os }}
+    needs: quality
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+        python-version: ["3.12"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.12.4"
+          enable-cache: true
+
+      - name: Build distributions
+        run: uv build
+
+      - name: Install the built wheel into a clean environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          WHEEL=$(ls dist/*.whl)
+          uv venv --python ${{ matrix.python-version }} /tmp/psd-wheel-smoke
+          VIRTUAL_ENV=/tmp/psd-wheel-smoke uv pip install "$WHEEL"
+          /tmp/psd-wheel-smoke/bin/psd --help || /tmp/psd-wheel-smoke/Scripts/psd.exe --help
+
+      - name: Verify wheel import, version, and canonical schema registry
+        shell: bash
+        run: |
+          set -euo pipefail
+          BIN=/tmp/psd-wheel-smoke/bin/psd
+          EXE=/tmp/psd-wheel-smoke/Scripts/psd.exe
+          if [ -x "$BIN" ]; then PSD="$BIN"; else PSD="$EXE"; fi
+          "$PSD" version
+          "$PSD" schema version
+          "$PSD" schema list
+        env:
+          PSD_SMOKE_OK: "1"

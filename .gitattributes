@@ -1,0 +1,37 @@
+# Normalize text files to LF in the repository; check out with platform endings.
+* text=auto eol=lf
+
+# Windows-native checkout convenience for scripts only.
+*.ps1 text eol=crlf
+*.cmd text eol=crlf
+*.bat text eol=crlf
+
+# Explicit LF for source, config, and documentation.
+*.py text eol=lf
+*.pyi text eol=lf
+*.toml text eol=lf
+*.md text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.json text eol=lf
+*.jsonc text eol=lf
+*.cfg text eol=lf
+*.txt text eol=lf
+*.cff text eol=lf
+LICENSE text eol=lf
+
+# Never normalize binary artifacts.
+*.parquet binary
+*.arrow binary
+*.ipc binary
+*.duckdb binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.pdf binary
+*.zip binary
+*.whl binary
+
+# Keep diffs usable for generated lockfiles and vendored schemas.
+uv.lock text eol=lf diff linguist-generated=true

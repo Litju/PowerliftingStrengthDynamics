@@ -1,0 +1,144 @@
+[project]
+name = "powerlifting-strength-dynamics"
+version = "0.1.0"
+description = "PSD: open benchmark for longitudinal system identification and rollout simulation of strength adaptation in powerlifting."
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+authors = [{ name = "Julio Rodriguez" }]
+keywords = [
+  "powerlifting",
+  "sports-science",
+  "system-identification",
+  "benchmark",
+  "time-series",
+  "machine-learning",
+]
+classifiers = [
+  "Development Status :: 2 - Pre-Alpha",
+  "Intended Audience :: Science/Research",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Scientific/Engineering :: Information Analysis",
+  "Typing :: Typed",
+]
+dependencies = [
+  "duckdb>=1.1,<2",
+  "numpy>=2.1,<3",
+  "pandera[polars]>=0.22,<0.27",
+  "polars>=1.15,<2",
+  "pyarrow>=17,<22",
+  "pydantic>=2.9,<3",
+  "pydantic-settings>=2.6,<3",
+  "scipy>=1.14,<2",
+  "typer>=0.12,<1",
+]
+
+[project.urls]
+Homepage = "https://github.com/Litju/PowerliftingStrengthDynamics"
+Repository = "https://github.com/Litju/PowerliftingStrengthDynamics"
+Issues = "https://github.com/Litju/PowerliftingStrengthDynamics/issues"
+Funding = "https://github.com/sponsors/Litju"
+
+[project.scripts]
+psd = "psd.cli.main:main"
+
+[build-system]
+requires = ["uv_build>=0.12.4,<0.13"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-name = "psd"
+module-root = "src"
+
+[dependency-groups]
+dev = [
+  "hypothesis>=6.100,<7",
+  "mypy>=1.13,<2",
+  "pyright>=1.1.390,<2",
+  "pytest>=8.3,<9",
+  "pytest-cov>=6,<8",
+  "ruff>=0.9,<1",
+]
+
+[tool.ruff]
+required-version = ">=0.9"
+line-length = 100
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = [
+  "A",
+  "ANN",
+  "ARG",
+  "B",
+  "C4",
+  "DTZ",
+  "EM",
+  "E",
+  "F",
+  "G",
+  "I",
+  "N",
+  "PERF",
+  "PIE",
+  "PL",
+  "PT",
+  "PTH",
+  "RET",
+  "RSE",
+  "RUF",
+  "SIM",
+  "T20",
+  "TRY",
+  "UP",
+  "W",
+]
+ignore = [
+  "ANN401", # Any-type is rejected explicitly by pyright strict.
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = ["ARG001", "ARG002", "PLR0913", "PLR2004", "SLF001"]
+
+[tool.ruff.lint.flake8-pytest-style]
+fixture-parentheses = false
+mark-parentheses = false
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.pyright]
+include = ["src", "tests", "configs"]
+venvPath = "."
+venv = ".venv"
+pythonVersion = "3.12"
+pythonPlatform = "All"
+typeCheckingMode = "strict"
+reportMissingModuleSource = "error"
+reportPrivateImportUsage = false
+
+[tool.pytest.ini_options]
+minversion = "8.3"
+testpaths = ["tests"]
+addopts = [
+  "-ra",
+  "--strict-config",
+  "--strict-markers",
+  "--showlocals",
+]
+filterwarnings = ["error"]
+
+[tool.coverage.run]
+branch = true
+source = ["psd"]
+
+[tool.coverage.report]
+show_missing = true
+exclude_also = [
+  "if TYPE_CHECKING:",
+  "raise NotImplementedError",
+  "\\.\\.\\.",
+]

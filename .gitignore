@@ -1,0 +1,46 @@
+# Python build / packaging
+build/
+dist/
+*.egg-info/
+__pycache__/
+*.py[cod]
+
+# Virtual environments (uv)
+.venv/
+venv/
+
+# Test / coverage / tooling caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.hypothesis/
+.coverage
+coverage.xml
+htmlcov/
+
+# Windows-native artifacts
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+*.lnk
+
+# Local developer state (never commit; PSD has no hidden local state)
+.env
+.env.*
+!.env.example
+*.log
+
+# Never commit datasets, databases, or machine artifacts.
+# PSD keeps all data under the external PSD_DATA_ROOT boundary.
+/data/
+/datasets/
+/canonical/
+/synthetic/
+/runs/
+*.parquet
+*.arrow
+*.ipc
+*.duckdb
+*.db
+*.sqlite3
