@@ -1,0 +1,34 @@
+cff-version: 1.2.0
+title: "Powerlifting Strength Dynamics"
+message: >-
+  If you use this software, benchmark, or canonical schema in academic work,
+  please cite it as software. This project is pre-alpha: no peer-reviewed
+  paper describes the benchmark results yet, and PSD is not a validated
+  physiological model.
+type: software
+authors:
+  - name: "PSD contributors"
+repository-code: "https://github.com/Litju/PowerliftingStrengthDynamics"
+url: "https://github.com/Litju/PowerliftingStrengthDynamics"
+license: Apache-2.0
+abstract: >-
+  Powerlifting Strength Dynamics (PSD) is an open benchmark for longitudinal
+  system identification and rollout simulation of strength adaptation in
+  powerlifting. It defines a canonical, event-time representation of complete
+  powerlifting athlete histories that separates prescription, execution,
+  observation, and outcome, preserves source provenance and missingness, and
+  keeps real and synthetic data explicitly separable. PSD evaluates whether a
+  model has identified useful multi-step dynamics, not isolated one-rep-max
+  prediction, and imposes no physiological latent-state ontology.
+keywords:
+  - powerlifting
+  - sports-science
+  - system-identification
+  - longitudinal-data
+  - benchmark
+  - time-series
+  - partial-observation
+  - parquet
+  - reproducibility
+version: "0.1.0"
+date-released: "2026-10-01"
