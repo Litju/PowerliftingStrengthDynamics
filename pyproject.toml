@@ -115,6 +115,8 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 "src/psd/cli/*.py" = [
   "B008", # Typer's documented pattern: declare options in parameter defaults.
+  "PLR0913", # Typer commands are declarative option surfaces, not deep call graphs.
+  "PLR0917", # Same reason as PLR0913: one parameter per CLI option.
 ]
 "src/psd/serialization/*.py" = [
   # B009 conflicts with the documented `getattr` shims used to reach PyArrow and

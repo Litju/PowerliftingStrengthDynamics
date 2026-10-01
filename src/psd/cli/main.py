@@ -9,7 +9,11 @@ from __future__ import annotations
 import typer
 
 from psd import __version__
+from psd.cli.canonical_cmd import app as canonical_app
+from psd.cli.inspect_cmd import app as inspect_app
+from psd.cli.inspect_cmd import register_validate
 from psd.cli.paths_cmd import app as paths_app
+from psd.cli.schema_cmd import app as schema_app
 
 app = typer.Typer(
     name="psd",
@@ -17,7 +21,11 @@ app = typer.Typer(
     no_args_is_help=True,
     add_completion=False,
 )
+app.add_typer(canonical_app, name="canonical")
+app.add_typer(inspect_app, name="inspect")
 app.add_typer(paths_app, name="paths")
+app.add_typer(schema_app, name="schema")
+register_validate(app)
 
 
 @app.callback()

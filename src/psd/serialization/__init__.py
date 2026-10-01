@@ -1,6 +1,6 @@
 """Deterministic Arrow/Parquet serialization.
 
-Everything persisted by PSD must be reproducible. Three mechanisms cooperate:
+Everything persisted by PSD must be reproducible. Four mechanisms cooperate:
 
 1. **Explicit ordering.** :mod:`psd.serialization.ordering` sorts every table by
    its declared total ordering before anything is hashed or written. DuckDB and
@@ -11,6 +11,9 @@ Everything persisted by PSD must be reproducible. Three mechanisms cooperate:
    Parquet writer, row-group size, or PyArrow version.
 3. **Reproducible Parquet.** :mod:`psd.serialization.parquet` pins the writer
    options that would otherwise introduce run-to-run variation.
+4. **Dataset assembly.** :mod:`psd.serialization.dataset` assembles the canonical
+   table set, orders it, writes it inside the data root, and records both digests
+   per artifact in a deterministic JSON manifest.
 
 Two digests are therefore recorded per artifact:
 
@@ -30,9 +33,20 @@ from psd.serialization.canonical import (
     canonical_bytes,
     content_digest,
 )
-from psd.serialization.ordering import OrderingError, canonical_order
+from psd.serialization.dataset import (
+    CanonicalDataset,
+    DatasetLayoutError,
+    DatasetWriteSpec,
+    VerificationResult,
+    build_dataset,
+    read_dataset,
+    verify_dataset,
+    write_dataset,
+)
+from psd.serialization.ordering import OrderingError, canonical_order, canonical_order_polars
 from psd.serialization.parquet import (
     PARQUET_PROFILE,
+    ParquetProfile,
     ParquetWriteResult,
     read_parquet,
     sha256_file,
@@ -43,21 +57,33 @@ from psd.serialization.table import (
     empty_table,
     records_to_table,
     table_to_records,
+    table_to_rows,
 )
 
 __all__ = (
     "PARQUET_PROFILE",
+    "CanonicalDataset",
     "CanonicalEncodingError",
+    "DatasetLayoutError",
+    "DatasetWriteSpec",
     "OrderingError",
+    "ParquetProfile",
     "ParquetWriteResult",
     "TableSchemaMismatchError",
+    "VerificationResult",
+    "build_dataset",
     "canonical_bytes",
     "canonical_order",
+    "canonical_order_polars",
     "content_digest",
     "empty_table",
+    "read_dataset",
     "read_parquet",
     "records_to_table",
     "sha256_file",
     "table_to_records",
+    "table_to_rows",
+    "verify_dataset",
+    "write_dataset",
     "write_parquet",
 )

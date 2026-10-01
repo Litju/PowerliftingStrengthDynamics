@@ -327,6 +327,8 @@ def check_explicit_missingness(tables: TableRows) -> list[ValidationIssue]:
         "reps_performed": "performed_set",
         "raw_value": "body_measurement",
         "mean_velocity_mps": "velocity_observation",
+        "duration_seconds": "performed_session",
+        "ended_at": "performed_session",
     }
     for column, table in optional_columns.items():
         for row in tables.get(table, ()):

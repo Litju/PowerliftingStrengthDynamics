@@ -26,8 +26,8 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from psd.provenance.environment import EnvironmentSnapshot
 from psd.provenance.sources import DataRegime, SourceNature, SourceRecord
-from psd.schema.version import MANIFEST_VERSION, SchemaVersion
 from psd.timeutil import require_aware
+from psd.versions import MANIFEST_VERSION, SchemaVersion
 
 __all__ = (
     "ArtifactRef",
