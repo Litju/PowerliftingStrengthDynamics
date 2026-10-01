@@ -171,6 +171,8 @@ _COMPOUND_BY_LENGTH: Final[dict[int, tuple[tuple[tuple[str, ...], str], ...]]] =
 }
 _COMPOUND_LENGTHS: Final[tuple[int, ...]] = tuple(sorted(_COMPOUND_BY_LENGTH, reverse=True))
 
+_QUESTION_MARK: Final[str] = "?"
+
 # Every rule identifier this module can emit is declared in the controlled
 # vocabulary, so ``exercise_normalization.normalization_rules`` can be validated
 # as a column without importing the ontology.
@@ -267,16 +269,15 @@ def normalize_label(raw: str) -> NormalizedLabel:
 
 
 def _ends_with_question_mark(text: str) -> bool:
-    """Return whether the label's final token is a question.
+    """Return whether the label's last non-whitespace character is a question mark.
 
-    Testing the last whitespace-separated token rather than the last character is what
-    makes the answer robust to trailing punctuation: ``Squat ?`` and ``Squat-?-`` both
-    end in a question, and a source that trailed a dash should not silently turn the
-    doubt back into a mapping. Requiring the *final* token is what keeps
-    ``What? Squat`` -- a label that merely contains a question mark -- out of it.
+    Deliberately the simplest rule that captures the meaning: a source writes a
+    question mark at the end of the thing it is unsure about. Testing the final
+    character rather than a token keeps the answer independent of what punctuation the
+    source used around the word, and requires the mark to be at the end so that
+    ``What? Squat`` -- a label that merely contains a question mark -- is not one.
     """
-    tokens = [token for token in text.split() if token]
-    return bool(tokens) and "?" in tokens[-1]
+    return text.rstrip().endswith(_QUESTION_MARK)
 
 
 def _expand_abbreviations(tokens: list[str]) -> list[str]:

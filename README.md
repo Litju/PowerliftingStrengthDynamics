@@ -39,12 +39,45 @@ The central entities are:
 * **Execution** — `performed_session`, `performed_exercise`, `performed_set`, `performed_rep`
 * **Observations** — `observation`, `performance_test`, `velocity_observation`
 * **Competition** — `competition`, `competition_attempt`, `competition_reported_result`
-* **Semantics** — `exercise_definition`, `exercise_alias`
+* **Semantics** — `exercise_definition`, `exercise_alias`, `exercise_normalization`
 * **Provenance** — `source`, `provenance`, plus row-level source keys on every event table
 
 Records carry explicit temporal provenance (`created_at`, `scheduled_at`,
 `performed_at`, `observed_at`, `modified_at`, `ingested_at`) so that "what was known
 at prediction time" is decidable rather than assumed.
+
+## Exercise semantics
+
+Heterogeneous logs call one movement many things, and call different movements many of
+the same things. PSD keeps identity, spelling, and refusal separate:
+
+| Layer | Table | What it records |
+| --- | --- | --- |
+| Identity | `exercise_definition` | What an exercise **is**: parent lift, specificity, implement, bar, apparatus, stance, grip, range of motion, pause, tempo, laterality, setup flags. |
+| Spelling | `exercise_alias` | A label some app wrote, bound to exactly one canonical exercise, with the verbatim string preserved. |
+| Refusal | `exercise_normalization` | Every mapping decision **including the ones PSD declines to make**, with the reason and, where they exist, the candidate readings. |
+
+Normalizing a label is a six-stage ladder — canonical identity, curated ambiguity,
+exact alias, generic qualifier, structured interpretation, family keyword — and the
+first defensible answer wins. A stage that cannot name one canonical exercise returns
+`partial_family`, `ambiguous`, or `unmapped` with a reason, and no later stage may
+upgrade it. Coverage is a property of the vocabulary, not a licence to guess, so
+`Machine press`, `Bench variation`, and `Leg press?` stay open on purpose.
+
+The ontology describes what an exercise is and never what it is worth: it records no
+transfer coefficient, no specificity score, and no statement that one variation
+substitutes for another. Models learn those relationships from the published
+descriptors.
+
+```powershell
+uv run psd ontology version
+uv run psd ontology resolve "Low Bar Squat" "Machine press" --source hevy
+uv run psd ontology build
+```
+
+`psd ontology build` persists the ontology as an ordinary canonical dataset, so it
+inherits canonical ordering, Arrow schema enforcement, writer-independent content
+digests, and manifest verification rather than a parallel format.
 
 ## Installation
 
@@ -100,6 +133,7 @@ psd schema      # canonical table registry, machine-readable schemas, schema ver
 psd validate    # validate a canonical dataset: declarative columns plus cross-record rules
 psd canonical   # build and verify canonical datasets; print provenance and checksum manifests
 psd inspect     # inspect persisted tables and athlete event timelines
+psd ontology    # inspect the exercise ontology; normalize raw labels; persist it
 psd paths       # resolved external data-root layout
 psd version     # installed PSD version
 ```
@@ -115,6 +149,9 @@ lives only inside command functions.
 
 * **Stage:** pre-alpha (`Development Status :: 2 - Pre-Alpha`).
 * **Schema version:** `psd-canonical/0.2.0` — not a frozen public contract.
+* **Ontology version:** `psd-ontology/0.1.0`, alias registry
+  `psd-ontology-alias/0.1.0` — tracked separately, because adding a source alias must
+  not imply that a canonical exercise identity changed.
 * **Design authority:** scientific design documents are *tentative*; the technical
   stack and engineering constraints document is *locked* for v0/Alpha.
 

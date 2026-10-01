@@ -211,14 +211,38 @@ def test_case_and_spacing_do_not_change_the_verdict(label: str, source: str) -> 
     """Harmless formatting must never move a label between ladder rungs.
 
     A verdict that changed with capitalisation would mean the registry indexed
-    different spellings differently, which is the failure the normalizer prevents.
+    different spellings differently, which is the failure the normalizer prevents. A
+    question mark is excluded from the dash rewrite: replacing spaces with dashes can
+    move a question mark into the final token, and a question mark is meaning rather
+    than formatting, so the property is narrowed rather than the rule weakened.
     """
     baseline = ONTOLOGY.resolve(label, source_system=source)
-    for variant in (label.upper(), f"   {label}   ", label.replace(" ", "-")):
+    variants = [label.upper(), f"   {label}   "]
+    if "?" not in label:
+        variants.append(label.replace(" ", "-"))
+    for variant in variants:
         other = ONTOLOGY.resolve(variant, source_system=source)
-        assert other.resolution_status is baseline.resolution_status
-        assert other.exercise_key == baseline.exercise_key
-        assert other.candidate_keys == baseline.candidate_keys
+        assert other.resolution_status is baseline.resolution_status, variant
+        assert other.exercise_key == baseline.exercise_key, variant
+        assert other.candidate_keys == baseline.candidate_keys, variant
+
+
+@given(LABELS, SOURCE_SYSTEMS)
+@PROPERTY
+def test_a_trailing_question_mark_never_yields_a_mapping(label: str, source: str) -> None:
+    """A source that wrote a question is never answered with a canonical exercise.
+
+    The doubt may land as an ambiguity, when there is a candidate to record, or as an
+    honest unmapped when there is not. Either way the outcome carries no exercise and
+    no confidence, which is the whole point of the policy.
+    """
+    if not label.rstrip().endswith("?"):
+        return
+    outcome = ONTOLOGY.resolve(label, source_system=source)
+    assert outcome.resolution_status not in RESOLVED
+    assert outcome.exercise_key is None
+    assert outcome.confidence is None
+    assert outcome.ambiguity_reason is not None
 
 
 @given(LABELS, SOURCE_SYSTEMS)
