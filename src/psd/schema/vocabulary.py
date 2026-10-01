@@ -19,6 +19,13 @@ from __future__ import annotations
 from enum import StrEnum
 from typing import Final
 
+from psd.provenance.sources import (
+    ConsentBasis,
+    DataRegime,
+    RedistributionPolicy,
+    SourceNature,
+)
+
 __all__ = (
     "VOCABULARIES",
     "AttemptOrderBasis",
@@ -27,6 +34,8 @@ __all__ = (
     "BodyMeasurementMethod",
     "BodyMeasurementType",
     "CompetitionResultKind",
+    "ConsentBasis",
+    "DataRegime",
     "EquipmentClass",
     "EquipmentItem",
     "EventTimePrecision",
@@ -44,12 +53,14 @@ __all__ = (
     "PrescriptionBasis",
     "ProgramModificationKind",
     "QualityFlag",
+    "RedistributionPolicy",
     "RepStatus",
     "ReporterRole",
     "SessionStatus",
     "SessionType",
     "SetStatus",
     "SexCategory",
+    "SourceNature",
     "SpecificityLevel",
     "TestType",
     "ValueEncoding",
@@ -554,8 +565,13 @@ VOCABULARIES: Final[dict[str, tuple[str, ...]]] = {
     "equipment_item": tuple(member.value for member in EquipmentItem),
     "implement_type": tuple(member.value for member in ImplementType),
     "value_encoding": tuple(member.value for member in ValueEncoding),
+    "source_nature": tuple(member.value for member in SourceNature),
+    "data_regime": tuple(member.value for member in DataRegime),
+    "consent_basis": tuple(member.value for member in ConsentBasis),
+    "redistribution": tuple(member.value for member in RedistributionPolicy),
     "mass_unit": ("kg", "lb"),
     "length_unit": ("cm", "in", "m"),
+    "measurement_unit": ("kg", "lb", "cm", "in", "m"),
 }
 
 

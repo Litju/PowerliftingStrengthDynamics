@@ -28,11 +28,11 @@ import pyarrow as pa
 
 from psd.schema.registry import TableSpec, table_spec
 
-__all__ = ("OrderingError", "canonical_order", "canonical_order_polars")
+__all__ = ("OrderingError", "canonical_order", "canonical_order_polars", "from_arrow_frame")
 
 #: Polars `from_arrow` is typed as returning `DataFrame | Series` with unknown
 #: parameters upstream; the shim pins the concrete frame type PSD always gets.
-_FROM_ARROW: Callable[[pa.Table], pl.DataFrame] = getattr(pl, "from_arrow")
+from_arrow_frame: Callable[[pa.Table], pl.DataFrame] = getattr(pl, "from_arrow")
 
 
 class OrderingError(ValueError):
@@ -63,7 +63,7 @@ def canonical_order(table: pa.Table, order_by: Sequence[str], *, table_name: str
     """
     spec = table_spec(table_name)
     _require_total_order(spec, order_by)
-    frame = canonical_order_polars(_FROM_ARROW(table), order_by)
+    frame = canonical_order_polars(from_arrow_frame(table), order_by)
     sorted_table = frame.to_arrow()
     return sorted_table.cast(table.schema)
 
