@@ -64,8 +64,13 @@ def test_within_data_root_rejects_parent_traversal(tmp_path: Path) -> None:
 
 
 def test_within_data_root_rejects_absolute_paths(tmp_path: Path) -> None:
+    # The escape has to be absolute on the platform running the test: a literal
+    # "C:/secrets" is absolute on Windows but relative on Linux.
+    outside = tmp_path.parent / "secrets"
+    assert outside.is_absolute()
+
     with pytest.raises(DataRootEscapeError, match="absolute"):
-        resolve_within_data_root(Path("C:/secrets"), data_root=tmp_path)
+        resolve_within_data_root(outside, data_root=tmp_path)
 
 
 def test_create_flag_materializes_parent(tmp_path: Path) -> None:

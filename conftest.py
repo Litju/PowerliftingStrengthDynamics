@@ -18,4 +18,8 @@ __all__ = ("pytest_configure",)
 
 def pytest_configure(config: pytest.Config) -> None:
     """Pin pytest's temporary base directory inside the checkout."""
-    config.option.basetemp = str(config.rootpath / ".pytest_cache" / "tmp")
+    # pytest creates the base directory itself but not its parents, so a fresh
+    # checkout with no .pytest_cache/ yet would fail with FileNotFoundError.
+    base = config.rootpath / ".pytest_cache" / "tmp"
+    base.mkdir(parents=True, exist_ok=True)
+    config.option.basetemp = str(base)

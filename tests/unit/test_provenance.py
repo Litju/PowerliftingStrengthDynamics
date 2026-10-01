@@ -166,16 +166,52 @@ def test_duplicate_source_ids_are_rejected() -> None:
         _manifest(sources=(_source(), _source()))
 
 
-def test_artifact_path_must_be_relative() -> None:
-    with pytest.raises(ValidationError, match="relative"):
+@pytest.mark.parametrize(
+    "candidate",
+    [
+        "C:/data/athlete.parquet",
+        "/data/athlete.parquet",
+        r"\\server\share\athlete.parquet",
+        r"tables\performed_set.parquet",
+    ],
+)
+def test_artifact_path_must_be_relative(candidate: str) -> None:
+    """The same manifest must be rejected everywhere, not just on Windows.
+
+    ``C:/data/athlete.parquet`` is absolute on Windows and relative on Linux, so a
+    check that relied on ``Path.is_absolute`` alone would accept it on one
+    platform and refuse it on the other.
+    """
+    with pytest.raises(ValidationError, match="relative POSIX path"):
         ArtifactRef(
             name="athlete",
-            relative_path="C:/data/athlete.parquet",
+            relative_path=candidate,
             sha256="c" * 64,
             content_sha256="d" * 64,
             byte_size=1,
             row_count=1,
         )
+
+
+@pytest.mark.parametrize(
+    "candidate",
+    [
+        "athlete.parquet",
+        "tables/athlete.parquet",
+        "tables/nested/deeper/athlete.parquet",
+    ],
+)
+def test_artifact_path_accepts_portable_relative_paths(candidate: str) -> None:
+    reference = ArtifactRef(
+        name="athlete",
+        relative_path=candidate,
+        sha256="c" * 64,
+        content_sha256="d" * 64,
+        byte_size=1,
+        row_count=1,
+    )
+
+    assert reference.relative_path == candidate
 
 
 def test_manifest_json_is_deterministic_and_parseable() -> None:

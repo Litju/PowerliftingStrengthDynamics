@@ -19,7 +19,7 @@ import hashlib
 import json
 from datetime import datetime
 from enum import StrEnum
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Self
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -78,9 +78,29 @@ class ArtifactRef(BaseModel):
 
     @model_validator(mode="after")
     def _reject_non_relative_path(self) -> Self:
-        path = Path(self.relative_path)
-        if path.is_absolute():
-            msg = f"relative_path must be relative; got {self.relative_path!r}."
+        """Reject any path that is not a portable relative POSIX path.
+
+        A manifest is a persisted artifact: it may be verified on a different
+        platform than the one that wrote it. ``Path.is_absolute`` alone is
+        platform-dependent, so ``C:/data/x.parquet`` would be rejected on Windows
+        and silently accepted on Linux. The check therefore rejects a path that is
+        absolute on *any* platform, that carries a drive letter or UNC prefix, or
+        that uses a backslash separator, which keeps manifests identical across
+        operating systems.
+        """
+        candidate = self.relative_path
+        reasons: list[str] = []
+        if Path(candidate).is_absolute() or PurePosixPath(candidate).is_absolute():
+            reasons.append("it is absolute")
+        if PureWindowsPath(candidate).is_absolute():
+            reasons.append("it is absolute on Windows")
+        if "\\" in candidate:
+            reasons.append("it uses a backslash separator")
+        if reasons:
+            msg = (
+                f"relative_path must be a portable relative POSIX path; got "
+                f"{candidate!r}: {'; '.join(reasons)}."
+            )
             raise ValueError(msg)
         return self
 
