@@ -594,9 +594,17 @@ def _check_cross_athlete_session_link(tables: TableRows) -> Iterable[ValidationI
 
 
 def _check_cross_athlete_exercise_link(tables: TableRows) -> Iterable[ValidationIssue]:
-    """Report performed exercises linked to another athlete's planned exercise."""
+    """Report performed exercises linked to another athlete's planned exercise.
+
+    Neither ``performed_exercise`` nor ``planned_exercise`` carries an
+    ``athlete_id``: a canonical table either owns the athlete or inherits it from
+    its parent session. The comparison therefore has to walk up to the owning
+    performed session and planned session rather than read a column that does not
+    exist.
+    """
     planned_exercises = build_index(tables, "planned_exercise", "planned_exercise_id")
     planned_sessions = build_index(tables, "planned_session", "planned_session_id")
+    performed_sessions = build_index(tables, "performed_session", "performed_session_id")
     for row in tables.get("performed_exercise", ()):
         planned_id = row.get("planned_exercise_id")
         if planned_id is None:
@@ -607,7 +615,10 @@ def _check_cross_athlete_exercise_link(tables: TableRows) -> Iterable[Validation
         planned_session = planned_sessions.get(plan.get("planned_session_id"))
         if planned_session is None:
             continue
-        if planned_session.get("athlete_id") != row.get("athlete_id"):
+        performed_session = performed_sessions.get(row.get("performed_session_id"))
+        if performed_session is None:
+            continue
+        if planned_session.get("athlete_id") != performed_session.get("athlete_id"):
             yield _cross_athlete_issue("performed_exercise", row, "planned_exercise", plan)
 
 
