@@ -117,6 +117,12 @@ ignore = [
 "src/psd/cli/*.py" = [
   "B008", # Typer's documented pattern: declare options in parameter defaults.
 ]
+"src/psd/serialization/*.py" = [
+  # B009 conflicts with the documented `getattr` shims used to reach PyArrow and
+  # Polars entry points whose upstream types are incomplete. The shims keep
+  # Pyright strict project-wide instead of relaxing it.
+  "B009",
+]
 "tests/**/*.py" = [
   "ARG001",
   "ARG002",
