@@ -149,8 +149,8 @@ def _minimal_dataset(tmp_path: Path) -> tuple[Path, Path]:
     return data_root, Path("canonical") / "ds_test"
 
 
-def test_build_dataset_contains_every_canonical_table() -> None:
-    records = load_records(_write_records(Path("records"), {"source": [_source()]}))
+def test_build_dataset_contains_every_canonical_table(tmp_path: Path) -> None:
+    records = load_records(_write_records(tmp_path / "records", {"source": [_source()]}))
     dataset = build_dataset(records, dataset_id="ds_x", created_at=CREATED_AT)
     assert set(dataset.tables) == set(table_names())
     assert dataset.row_counts()["source"] == 1
