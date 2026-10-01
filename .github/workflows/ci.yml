@@ -15,6 +15,10 @@ concurrency:
   cancel-in-progress: true
 
 env:
+  # UV_FROZEN already refuses to touch uv.lock and fails if it would have to, so
+  # no step may also pass --locked: uv rejects that combination outright. Setting
+  # it for the whole workflow keeps sync, run, and build consistent, and
+  # astral-sh/setup-uv sets the same variable itself.
   UV_FROZEN: "1"
   UV_NO_PROGRESS: "1"
 
@@ -37,15 +41,11 @@ jobs:
           version: "0.12.4"
           enable-cache: true
 
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-
       - name: Resolve interpreter
         run: uv python install ${{ matrix.python-version }}
 
       - name: Install locked dependencies
-        run: uv sync --locked --all-groups
+        run: uv sync --all-groups
 
       - name: Lint (ruff check)
         run: uv run ruff check .
