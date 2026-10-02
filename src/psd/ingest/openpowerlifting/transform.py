@@ -1480,13 +1480,24 @@ def _empty_table(table_name: str) -> pa.Table:
 
 
 def _count_unrecognised(partition: pl.DataFrame, counters: BuildCounters) -> None:
-    """Record distinct values no declared mapping covers, so new ones stay visible."""
+    """Record distinct values no declared mapping covers, so new ones stay visible.
+
+    An absent value is skipped rather than inspected: the CSV reader renders an empty
+    cell as null, and a null is the source saying nothing, which is a state every one of
+    these mappings already handles downstream (an unstated equipment word becomes the
+    declared ``unknown`` category). Calling ``.strip()`` on it would abort a build that
+    was about to record the absence correctly.
+
+    This costs nothing on a snapshot where the column is fully populated, which is the
+    case for all three columns in the pinned corpus: the filtered list is identical, so
+    the counters -- and therefore the corpus -- are unchanged.
+    """
     for column, mapping in (
         ("Sex", SEX_CATEGORY_BY_SOURCE),
         ("Event", EVENT_BY_SOURCE),
         ("Equipment", EQUIPMENT_CLASS_BY_SOURCE),
     ):
-        observed = partition.get_column(column).unique().to_list()
+        observed = [value for value in partition.get_column(column).unique().to_list() if value]
         unknown = [value for value in observed if value.strip() and value.strip() not in mapping]
         counters.note_unrecognised(column, unknown)
 
