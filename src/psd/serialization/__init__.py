@@ -14,6 +14,10 @@ Everything persisted by PSD must be reproducible. Four mechanisms cooperate:
 4. **Dataset assembly.** :mod:`psd.serialization.dataset` assembles the canonical
    table set, orders it, writes it inside the data root, and records both digests
    per artifact in a deterministic JSON manifest.
+5. **Derived artifacts.** :mod:`psd.serialization.derived` persists read-optimised
+   projections *of* canonical tables under the same ordering, Parquet profile, and
+   content digest, while recording which canonical dataset each one projects so a
+   summary can never be mistaken for an independent observation.
 
 Two digests are therefore recorded per artifact:
 
@@ -43,6 +47,13 @@ from psd.serialization.dataset import (
     verify_dataset,
     write_dataset,
 )
+from psd.serialization.derived import (
+    DerivedArtifactError,
+    DerivedTableSpec,
+    derived_metadata,
+    read_derived_table,
+    write_derived_table,
+)
 from psd.serialization.ordering import OrderingError, canonical_order, canonical_order_polars
 from psd.serialization.parquet import (
     PARQUET_PROFILE,
@@ -66,6 +77,8 @@ __all__ = (
     "CanonicalEncodingError",
     "DatasetLayoutError",
     "DatasetWriteSpec",
+    "DerivedArtifactError",
+    "DerivedTableSpec",
     "OrderingError",
     "ParquetProfile",
     "ParquetWriteResult",
@@ -76,8 +89,10 @@ __all__ = (
     "canonical_order",
     "canonical_order_polars",
     "content_digest",
+    "derived_metadata",
     "empty_table",
     "read_dataset",
+    "read_derived_table",
     "read_parquet",
     "records_to_table",
     "sha256_file",
@@ -85,5 +100,6 @@ __all__ = (
     "table_to_rows",
     "verify_dataset",
     "write_dataset",
+    "write_derived_table",
     "write_parquet",
 )
