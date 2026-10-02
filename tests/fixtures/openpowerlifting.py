@@ -11,11 +11,12 @@ than a happy path:
 * ``DQ``, ``DD``, ``G`` and ``NS`` participation codes;
 * an approximate ``23.5`` age beside an exact ``23``;
 * an open-ended ``90+`` weight class beside a bounded ``-93``;
-* reduced events: ``B``, ``BD``, ``S`` and ``SD``;
+* every declared event: ``SBD``, ``BD``, ``SD``, ``SB``, ``S``, ``B`` and ``D``;
 * ``Tested=Yes`` beside an untested result;
 * ``ParentFederation`` distinct from ``Federation``, and one absent;
 * two lifters sharing a name, disambiguated by the source's ``#N`` suffix;
-* one meet whose identity needs the whole six-field rule;
+* one meet whose identity needs the whole six-field rule, and a second entry at that meet
+  whose ``MeetName`` the source spells with different case and spacing;
 * a name the source reports under two sex categories;
 * an unsanctioned meet;
 * a source value PSD cannot read.
@@ -287,6 +288,86 @@ def edge_case_rows() -> tuple[dict[str, Any], ...]:
             "Country": "USA",
             "State": "TX",
             "ParentFederation": "IPF",
+        },
+        {
+            # The same meet as the first row, spelled differently: different case and
+            # internal spacing in ``MeetName``, everything else identical. The six-field
+            # meet rule normalizes both, so this is one meet -- a second meet row would
+            # break every foreign key pointing at it, and merging two genuinely different
+            # meets would invent a meet that never happened.
+            "Name": "Ivy Variant",
+            "Sex": "F",
+            "Event": "S",
+            "Equipment": "Raw",
+            "Age": "27",
+            "Division": "Open",
+            "BodyweightKg": "63.5",
+            "WeightClassKg": "-69",
+            "Squat1Kg": "120",
+            "Squat2Kg": "125",
+            "Squat3Kg": "-130",
+            "Best3SquatKg": "125",
+            "Place": "2",
+            "Dots": "350.4",
+            "Country": "USA",
+            "State": "TX",
+            # No ParentFederation, like every other row at this meet: it carries no
+            # sanctioning body, and this row must not give it one.
+            "MeetName": "  raw   NATIONAL   open ",
+        },
+        {
+            # ``SB`` is a declared event of its own: a squat and a bench, no deadlift. The
+            # absent deadlift is not an attempted-and-failed deadlift, so no deadlift row
+            # may exist anywhere for this participation.
+            "Name": "Jo Subtotal",
+            "Sex": "M",
+            "Event": "SB",
+            "Equipment": "Wraps",
+            "Age": "33",
+            "Division": "Open",
+            "BodyweightKg": "88",
+            "WeightClassKg": "-93",
+            "Squat1Kg": "170",
+            "Squat3Kg": "180",
+            "Best3SquatKg": "180",
+            "Bench1Kg": "-120",
+            "Bench3Kg": "130",
+            "Best3BenchKg": "130",
+            "Place": "1",
+            "Country": "USA",
+            "State": "TX",
+            "ParentFederation": "IPF",
+            "MeetCountry": "USA",
+            "MeetState": "TX",
+            "MeetTown": "Austin",
+            "MeetName": "Open Subtotal Classic",
+            "Federation": "USPA",
+        },
+        {
+            # ``D`` alone, with a deadlift record attempt: the one place a fourth attempt is
+            # legitimate, and it still contributes to no total.
+            "Name": "Kip Single",
+            "Sex": "M",
+            "Event": "D",
+            "Equipment": "Unlimited",
+            "Age": "26",
+            "Division": "Open",
+            "BodyweightKg": "110.5",
+            "WeightClassKg": "90+",
+            "Deadlift1Kg": "240",
+            "Deadlift2Kg": "255",
+            "Deadlift3Kg": "265",
+            "Deadlift4Kg": "272.5",
+            "Best3DeadliftKg": "265",
+            "Place": "1",
+            "Country": "USA",
+            "State": "NV",
+            "ParentFederation": "IPF",
+            "MeetCountry": "USA",
+            "MeetState": "NV",
+            "MeetTown": "Reno",
+            "MeetName": "Deadlift Open",
+            "Federation": "USPA",
         },
     )
 

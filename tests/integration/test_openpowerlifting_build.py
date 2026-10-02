@@ -274,12 +274,39 @@ def test_a_successful_attempt_is_marked_good(built: Built) -> None:
 def test_a_fourth_attempt_is_a_record_attempt(built: Built) -> None:
     """The source publishes a fourth bench attempt; it is kept, and numbered four."""
     _result, rows = built
-    attempt = _one(rows, "competition_attempt", attempt_number=4)
+    attempt = _one(rows, "competition_attempt", attempt_number=4, lift="bench")
 
-    assert attempt["lift"] == "bench"
     assert attempt["attempt_role"] == "record_fourth"
     assert attempt["attempt_order_basis"] == "source_explicit"
     assert attempt["load_kg"] == 127.5
+
+
+def test_a_fourth_attempt_exists_in_a_single_lift_event(built: Built) -> None:
+    """A ``D`` entry may take a record attempt; it is still a record attempt, not a third."""
+    _result, rows = built
+    attempt = _one(
+        rows,
+        "competition_attempt",
+        attempt_number=4,
+        athlete_name_marker="Kip Single",
+    )
+    results = _by_name(rows, "Kip Single")["competition_reported_result"]
+
+    assert attempt["lift"] == "deadlift"
+    assert attempt["attempt_role"] == "record_fourth"
+    assert attempt["load_kg"] == 272.5
+    # The published best and total both exclude it: 265 is the best of the first three.
+    assert {result["result_kind"]: result["value"] for result in results} == {
+        "deadlift_best": 265.0
+    }
+
+
+def test_every_fourth_attempt_is_labelled_as_one(built: Built) -> None:
+    _result, rows = built
+    fourths = [row for row in rows["competition_attempt"] if row["attempt_number"] == 4]
+
+    assert len(fourths) == 2
+    assert all(row["attempt_role"] == "record_fourth" for row in fourths)
 
 
 def test_the_first_attempt_is_the_opener(built: Built) -> None:
@@ -618,7 +645,7 @@ def test_a_meet_is_one_place_date_and_federation(built: Built) -> None:
     meet_ids = {row["competition_meet_id"] for row in rows["competition"]}
 
     assert len(meet_ids) == len(rows["competition_meet"])
-    assert len(rows["competition_meet"]) == 4
+    assert len(rows["competition_meet"]) == 6
 
 
 def test_meet_town_is_carried(built: Built) -> None:
@@ -631,20 +658,40 @@ def test_meet_town_is_carried(built: Built) -> None:
     assert meet["meet_country"] == "USA"
 
 
+def test_a_variant_spelling_of_a_meet_is_one_meet(built: Built) -> None:
+    """``raw   NATIONAL   open`` and ``Raw National Open`` name one meet, not two.
+
+    Meet identity is a normalized six-field key, so a cosmetic difference must not mint a
+    second identity: a meet table with two rows for it would leave every foreign key
+    pointing at one of them, and a merged pair would hide a real difference. The fixture
+    proves the first by asserting one row, and the audit's
+    ``competitions_reference_a_meet`` invariant would catch the second.
+    """
+    _result, rows = built
+    dallas = _one(rows, "competition_meet", meet_town="Dallas")
+    variant = _one(rows, "competition", athlete_name_marker="Ivy Variant")
+
+    assert variant["competition_meet_id"] == dallas["competition_meet_id"]
+    # Which spelling survives is fixed rather than chosen: the lexicographically smallest
+    # raw variant tuple, so the outcome depends on neither row order nor chunking.
+    assert dallas["meet_name"] == "  raw   NATIONAL   open "
+    assert len(rows["competition_meet"]) == len(
+        {row["competition_meet_id"] for row in rows["competition"]}
+    )
+
+
 def test_every_competition_references_a_meet_that_exists(built: Built) -> None:
     """A competition pointing at a meet that is not there is a dangling foreign key.
 
-    Nothing else in the build catches this. Meet identity is derived twice -- once while
-    staging, once while building the meet table -- and when the two derivations disagree
-    each table is still well formed and each digest still describes its own rows
-    correctly. Only a referential check sees it, and the corpus it produces is unusable:
-    no consumer can join a competition to the meet it happened at.
+    Nothing else in the build catches this: the two tables are each well formed and each
+    digest is computed over its own rows, so a disagreement between them is invisible to
+    every integrity check the build performs. It was found by the audit's
+    ``competitions_reference_a_meet`` invariant.
     """
     _result, rows = built
     meet_ids = {row["competition_meet_id"] for row in rows["competition_meet"]}
 
     assert {row["competition_meet_id"] for row in rows["competition"]} <= meet_ids
-    assert meet_ids
 
 
 def test_a_parent_federation_is_not_the_federation(built: Built) -> None:
@@ -661,6 +708,7 @@ def test_a_missing_parent_federation_stays_missing(built: Built) -> None:
     meet = _one(rows, "competition_meet", meet_town="Dallas")
 
     assert meet["meet_parent_federation"] is None
+    assert meet["meet_federation"] == "USPA"
 
 
 def test_sanctioning_is_carried(built: Built) -> None:
@@ -686,11 +734,11 @@ def test_meet_dates_are_date_only(built: Built) -> None:
 
 
 def test_reduced_events_are_kept(built: Built) -> None:
-    """``B``, ``BD``, ``S`` and ``SD`` are events in their own right, not malformed SBD."""
+    """Every declared event is an event in its own right, not a malformed SBD."""
     _result, rows = built
     events = {row["competition_event"] for row in rows["competition"]}
 
-    assert events == {"sbd", "bd", "s", "sd", "b"}
+    assert events == {"sbd", "bd", "sd", "sb", "s", "b", "d"}
 
 
 def test_a_reduced_event_has_no_attempts_at_the_absent_lift(built: Built) -> None:
@@ -706,8 +754,10 @@ _LIFTS_OF_EVENT: dict[str, set[str]] = {
     "sbd": {"squat", "bench", "deadlift"},
     "bd": {"bench", "deadlift"},
     "sd": {"squat", "deadlift"},
+    "sb": {"squat", "bench"},
     "b": {"bench"},
     "s": {"squat"},
+    "d": {"deadlift"},
 }
 
 
