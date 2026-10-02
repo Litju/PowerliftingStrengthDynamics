@@ -21,8 +21,9 @@ Provenance
 
 The dataset is a *reference* artifact: its manifest cites no sources, because the
 vocabulary was authored rather than ingested. The one ``source`` row it carries is
-the registry itself, so that every ontology row's ``source_id`` resolves inside the
-artifact rather than only in the code that produced it.
+the registry itself, classified ``reference`` rather than ``synthetic``, so that every
+ontology row's ``source_id`` resolves inside the artifact and no reader can mistake an
+authored descriptor set for simulated athlete observations.
 """
 
 from __future__ import annotations
@@ -107,18 +108,23 @@ def ontology_source_record(version: str) -> SourceRecord:
     The ontology is not an external dataset, but every canonical row must name the
     source it came from, so the registry records itself.
 
+    The record is classified ``reference``, not ``synthetic``: the exercise ontology
+    is authored reference data, so it describes no athlete and was not produced by the
+    simulator. Filing it as PSD-Sim would assert that a generator produced it, and
+    would leave ``SourceNature.SYNTHETIC`` meaning "not real athlete data" rather than
+    "generated athlete observations".
+
     Args:
         version: Ontology version tag, stored as the dataset version.
 
     Returns:
-        A ``synthetic``/``psd_sim`` source record: the vocabulary was authored, so it
-        describes no real athlete and must never be read as observed data.
+        A ``reference``/``psd_reference`` source record for the authored vocabulary.
     """
     return SourceRecord(
         source_id=REGISTRY_SOURCE_ID,
         display_name="PSD exercise ontology registry",
-        nature=SourceNature.SYNTHETIC,
-        regime=DataRegime.SIM,
+        nature=SourceNature.REFERENCE,
+        regime=DataRegime.REFERENCE,
         origin_system=ONTOLOGY_SOURCE_SYSTEM,
         dataset_version=version,
         license_id="apache-2.0",
@@ -126,8 +132,9 @@ def ontology_source_record(version: str) -> SourceRecord:
         redistribution=RedistributionPolicy.ALLOWED,
         ingested_at=ONTOLOGY_EPOCH,
         notes=(
-            "Authored reference vocabulary, not an external dataset. Rows describe exercise "
-            "semantics and carry no observations about any athlete."
+            "Authored reference vocabulary, not an external dataset and not simulator "
+            "output. Rows describe exercise semantics and carry no observations about "
+            "any athlete."
         ),
     )
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -111,8 +112,71 @@ def test_synthetic_source_must_declare_sim_regime() -> None:
 
 
 def test_real_source_cannot_declare_sim_regime() -> None:
-    with pytest.raises(ValidationError, match="simulated regimes must contain synthetic"):
+    with pytest.raises(ValidationError, match=re.escape("regime 'psd_sim' but is real")):
         _source(regime=DataRegime.SIM)
+
+
+def test_real_source_cannot_declare_reference_regime() -> None:
+    with pytest.raises(ValidationError, match=re.escape("regime 'psd_reference' but is real")):
+        _source(regime=DataRegime.REFERENCE)
+
+
+def test_reference_source_must_declare_reference_regime() -> None:
+    """Authored vocabulary is its own regime, not a simulator regime."""
+    with pytest.raises(ValidationError, match="reference sources must declare"):
+        _source(
+            nature=SourceNature.REFERENCE,
+            regime=DataRegime.SIM,
+            consent_basis=ConsentBasis.NONE_DECLARED,
+            license_id="apache-2.0",
+            redistribution=RedistributionPolicy.ALLOWED,
+        )
+
+
+def test_synthetic_source_cannot_declare_reference_regime() -> None:
+    with pytest.raises(ValidationError, match="synthetic sources must declare"):
+        _source(
+            nature=SourceNature.SYNTHETIC,
+            regime=DataRegime.REFERENCE,
+            consent_basis=ConsentBasis.PUBLIC_LICENSE,
+            license_id="apache-2.0",
+            redistribution=RedistributionPolicy.ALLOWED,
+        )
+
+
+def _reference_source() -> SourceRecord:
+    return _source(  # type: ignore[return-value]
+        source_id="src_psd_exercise_ontology",
+        display_name="PSD exercise ontology registry",
+        nature=SourceNature.REFERENCE,
+        regime=DataRegime.REFERENCE,
+        origin_system="psd-ontology",
+        license_id="apache-2.0",
+        consent_basis=ConsentBasis.NONE_DECLARED,
+        redistribution=RedistributionPolicy.ALLOWED,
+    )
+
+
+def test_reference_provenance_describes_no_athlete() -> None:
+    """A reference source needs no athlete consent, because it holds no athletes."""
+    record = _reference_source()
+    assert record.nature is SourceNature.REFERENCE
+    assert record.regime is DataRegime.REFERENCE
+    assert record.consent_basis is ConsentBasis.NONE_DECLARED
+
+
+def test_reference_and_simulator_regimes_stay_distinguishable() -> None:
+    """The point of the third nature: "generated" no longer means "not real"."""
+    simulator = _source(
+        source_id="psd_sim_gen",
+        nature=SourceNature.SYNTHETIC,
+        regime=DataRegime.SIM,
+        consent_basis=ConsentBasis.PUBLIC_LICENSE,
+        redistribution=RedistributionPolicy.ALLOWED,
+        license_id="apache-2.0",
+    )
+    assert simulator.nature is not _reference_source().nature
+    assert simulator.regime is not _reference_source().regime
 
 
 def test_non_redistributable_source_requires_license() -> None:
@@ -146,6 +210,23 @@ def test_real_dataset_cannot_cite_synthetic_source() -> None:
     )
     with pytest.raises(ValidationError, match="cannot cite synthetic sources"):
         _manifest(sources=(synthetic,))
+
+
+def test_ingestion_dataset_cannot_cite_reference_vocabulary() -> None:
+    """Authored vocabulary is not an ingested observation source.
+
+    Rows derived from the registry are re-stamped on ingest with the ingest source, so
+    an athlete-history dataset citing the ontology would be claiming an external
+    ingestion it never performed.
+    """
+    with pytest.raises(ValidationError, match="cannot cite reference sources"):
+        _manifest(sources=(_source(), _reference_source()))
+
+
+def test_reference_dataset_may_not_cite_even_reference_sources() -> None:
+    """A reference artifact is self-describing, so it cites nothing at all."""
+    with pytest.raises(ValidationError, match="reference dataset cites no sources"):
+        _manifest(dataset_kind=DatasetKind.REFERENCE, sources=(_reference_source(),))
 
 
 def test_mixed_real_and_synthetic_dataset_is_rejected() -> None:

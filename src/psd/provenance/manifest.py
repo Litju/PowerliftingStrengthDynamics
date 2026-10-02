@@ -17,10 +17,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Mapping
 from datetime import datetime
 from enum import StrEnum
 from pathlib import Path, PurePosixPath, PureWindowsPath
-from typing import Self
+from typing import Final, Self
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -36,6 +37,16 @@ __all__ = (
     "LineageEntry",
     "manifest_digest",
 )
+
+#: The regime a cited source's nature forces, where the nature is more than "real".
+#:
+#: Mirrors the rule in :class:`~psd.provenance.sources.SourceRecord`. It is repeated
+#: here because a manifest may be read from disk without revalidating every source,
+#: and the two are the two places a misfiled regime would otherwise hide.
+_REGIME_BY_NATURE: Final[Mapping[SourceNature, DataRegime]] = {
+    SourceNature.SYNTHETIC: DataRegime.SIM,
+    SourceNature.REFERENCE: DataRegime.REFERENCE,
+}
 
 
 class DatasetKind(StrEnum):
@@ -204,12 +215,18 @@ class DatasetManifest(BaseModel):
         if (
             self.dataset_kind is not DatasetKind.SYNTHETIC
             and self.dataset_kind is not DatasetKind.MIXED
-            and self.dataset_kind is not DatasetKind.REFERENCE
             and SourceNature.SYNTHETIC in natures
         ):
             msg = (
                 f"Dataset kind {self.dataset_kind.value!r} cannot cite synthetic sources; "
                 "PSD keeps real and synthetic regimes explicitly separate."
+            )
+            raise ValueError(msg)
+        if self.dataset_kind is not DatasetKind.REFERENCE and SourceNature.REFERENCE in natures:
+            msg = (
+                f"Dataset kind {self.dataset_kind.value!r} cannot cite reference sources; "
+                "authored vocabulary describes concepts, not ingested observations, and "
+                "belongs in its own reference artifact."
             )
             raise ValueError(msg)
         if self.dataset_kind is DatasetKind.REFERENCE and self.sources:
@@ -220,7 +237,7 @@ class DatasetManifest(BaseModel):
             raise ValueError(msg)
 
         for source in self.sources:
-            expected = DataRegime.SIM if source.nature is SourceNature.SYNTHETIC else None
+            expected = _REGIME_BY_NATURE.get(source.nature)
             if expected is not None and source.regime is not expected:
                 msg = f"Source {source.source_id!r} must declare regime {expected.value!r}."
                 raise ValueError(msg)

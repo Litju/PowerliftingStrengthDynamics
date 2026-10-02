@@ -232,7 +232,7 @@ def test_build_json_prints_the_manifest() -> None:
     assert result.exit_code == 0, result.output
     payload = json.loads(result.stdout)
     assert payload["dataset_kind"] == "reference"
-    assert payload["schema_version"] == "psd-canonical/0.2.0"
+    assert payload["schema_version"] == "psd-canonical/0.3.0"
     assert len(payload["artifacts"]) == len(table_names())
     assert payload["sources"] == []
 

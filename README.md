@@ -25,7 +25,7 @@ is subordinate to them.
 | No manufactured prescriptions | A missing prescription stays missing. Execution is never back-filled into a plan. |
 | No zero-as-missing | Absence is `null` plus an explicit missingness reason. Zero is only used when zero is semantically correct (for example, `0` repetitions completed on a failed set). |
 | No silent coercion | Ambiguous timestamps, ambiguous athlete identity, and ambiguous source values are flagged, not guessed. |
-| Real and synthetic stay separable | Synthetic ground truth is labelled as synthetic and is never projected onto real athletes as validated physiology. |
+| Real, simulated, and authored stay separable | Simulator ground truth is labelled `synthetic`/`psd_sim` and is never projected onto real athletes as validated physiology; authored vocabulary is labelled `reference`/`psd_reference` and is never presented as either. |
 | No imposed latent-state ontology | The benchmark does not require any particular decomposition of latent physiological state. |
 | Provenance and missingness survive | Raw source values and source identity are preserved alongside normalized representations. |
 
@@ -80,6 +80,12 @@ while `conventional_deadlift` and `sumo_deadlift` are two stance-qualified varia
 of it — both `competition_variation`, symmetrically, neither privileged. A source that
 does state a stance gets the stance-qualified entity, exactly as `Low Bar Squat` gets
 `low_bar_squat`.
+
+The ontology is **authored reference data**. Its manifest is `DatasetKind.REFERENCE`,
+its one `source` row is `SourceNature.REFERENCE` / `DataRegime.REFERENCE`, and
+`SourceNature.SYNTHETIC` / `psd_sim` remains reserved for simulator-generated athlete
+observations. A vocabulary that describes exercises describes no athlete at all, so
+filing it as PSD-Sim would assert a generator produced it.
 
 ```powershell
 uv run psd ontology version
@@ -161,7 +167,7 @@ lives only inside command functions.
 ## Repository status
 
 * **Stage:** pre-alpha (`Development Status :: 2 - Pre-Alpha`).
-* **Schema version:** `psd-canonical/0.2.0` — not a frozen public contract.
+* **Schema version:** `psd-canonical/0.3.0` — not a frozen public contract.
 * **Ontology version:** `psd-ontology/1.0.0`, alias registry
   `psd-ontology-alias/1.0.0` — tracked separately, because adding a source alias must
   not imply that a canonical exercise identity changed. Both are major because the

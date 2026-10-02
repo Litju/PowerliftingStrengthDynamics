@@ -15,13 +15,13 @@ from psd.schema.version import (
 
 
 def test_version_tags_are_canonical() -> None:
-    assert SCHEMA_VERSION.tag == "psd-canonical/0.2.0"
+    assert SCHEMA_VERSION.tag == "psd-canonical/0.3.0"
     assert MANIFEST_VERSION.tag == "psd-manifest/0.1.0"
     assert ID_SCHEME == "psd-ids-v1"
 
 
 def test_parse_round_trip() -> None:
-    assert SchemaVersion.parse("psd-canonical/0.2.0") == SCHEMA_VERSION
+    assert SchemaVersion.parse("psd-canonical/0.3.0") == SCHEMA_VERSION
 
 
 @pytest.mark.parametrize(

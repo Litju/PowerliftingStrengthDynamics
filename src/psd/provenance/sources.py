@@ -1,18 +1,26 @@
 """Source registry.
 
-A *source* is where a record came from, under what license and consent, and
-whether it is real or synthetic. Source semantics are part of the canonical
-model, not a side channel: PSD must keep real and synthetic data explicitly
-distinguishable, and third-party datasets must retain their own license,
-consent, provenance, and redistribution constraints.
+A *source* is where a record came from, under what license and consent, and what
+kind of thing it is. Source semantics are part of the canonical model, not a side
+channel: PSD must keep real athlete data, simulator-generated athlete data, and
+authored reference vocabulary explicitly distinguishable, and third-party datasets
+must retain their own license, consent, provenance, and redistribution constraints.
+
+The three natures are not degrees of one axis. ``real`` and ``synthetic`` both
+describe athletes and are told apart so PSD-Sim ground truth is never projected onto
+real athletes as validated physiology. ``reference`` describes neither: it is an
+authored vocabulary such as the exercise ontology, which records what an exercise *is*
+and holds no observation about any person. Filing reference data as synthetic would
+assert that a simulator generated it.
 """
 
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from datetime import datetime
 from enum import StrEnum
-from typing import Self
+from typing import Final, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -36,14 +44,23 @@ class SourceRecordError(ValueError):
 
 
 class SourceNature(StrEnum):
-    """Whether a source describes real or generated athletes.
+    """What kind of thing a source contributes.
 
-    This distinction is load-bearing. PSD-Sim ground truth must never be
-    projected onto real athletes as if it were validated physiology.
+    Three classifications, and the distinction between them is load-bearing.
+    PSD-Sim ground truth must never be projected onto real athletes as if it were
+    validated physiology, and *authored reference vocabulary* must never be
+    represented as generated athlete observations -- an exercise ontology records
+    no athlete at all, and calling it synthetic would imply a simulator produced it.
     """
 
+    #: Observations of a real person, ingested from an external system.
     REAL = "real"
+    #: Athlete observations produced by a simulator. This classification means
+    #: *generated athlete data* and nothing else.
     SYNTHETIC = "synthetic"
+    #: An authored, versioned vocabulary or structure: descriptors, code lists,
+    #: schema metadata. It describes concepts and holds no observations.
+    REFERENCE = "reference"
 
 
 class DataRegime(StrEnum):
@@ -52,7 +69,12 @@ class DataRegime(StrEnum):
     COMP = "psd_comp"
     REAL = "psd_real"
     PRO = "psd_pro"
+    #: Simulator-generated athlete observations. The only regime
+    #: :class:`SourceNature.SYNTHETIC` may declare.
     SIM = "psd_sim"
+    #: Authored reference vocabulary. The only regime
+    #: :class:`SourceNature.REFERENCE` may declare.
+    REFERENCE = "psd_reference"
 
 
 class RedistributionPolicy(StrEnum):
@@ -79,13 +101,25 @@ class ConsentBasis(StrEnum):
     UNKNOWN = "unknown"
 
 
+#: The regime a nature implies, where the nature is more than "real observations".
+#:
+#: A nature absent from this mapping makes no claim about the regime: real sources
+#: may legitimately feed the competition, real, or prospective regimes.
+_IMPLIED_REGIME: Final[Mapping[SourceNature, DataRegime]] = {
+    SourceNature.SYNTHETIC: DataRegime.SIM,
+    SourceNature.REFERENCE: DataRegime.REFERENCE,
+}
+
+
 class SourceRecord(BaseModel):
     """Immutable provenance record for one external data source.
 
     Attributes:
         source_id: Stable source identifier used as a foreign key everywhere.
         display_name: Human-readable name.
-        nature: ``real`` or ``synthetic``.
+        nature: ``real`` for athlete observations, ``synthetic`` for
+            simulator-generated athlete observations, or ``reference`` for authored
+            vocabulary that describes concepts rather than people.
         regime: Benchmark data regime.
         origin_system: Originating system or publication (for example
             ``openpowerlifting``, ``hevy_export``).
@@ -128,19 +162,24 @@ class SourceRecord(BaseModel):
         if self.snapshot_sha256 is not None and not _SHA256_PATTERN.match(self.snapshot_sha256):
             msg = f"snapshot_sha256 must be lowercase hex SHA-256; got {self.snapshot_sha256!r}."
             raise ValueError(msg)
-        if self.nature is SourceNature.SYNTHETIC and self.regime is not DataRegime.SIM:
+        implied = _IMPLIED_REGIME.get(self.nature)
+        if implied is not None and self.regime is not implied:
             msg = (
-                f"Source {self.source_id!r} is synthetic but declares regime "
-                f"{self.regime.value!r}; synthetic sources must declare "
-                f"{DataRegime.SIM.value!r}."
+                f"Source {self.source_id!r} is {self.nature.value} but declares regime "
+                f"{self.regime.value!r}; {self.nature.value} sources must declare "
+                f"{implied.value!r}."
             )
             raise ValueError(msg)
-        if self.nature is SourceNature.REAL and self.regime is DataRegime.SIM:
-            msg = (
-                f"Source {self.source_id!r} declares regime {self.regime.value!r} but is "
-                "real data; simulated regimes must contain synthetic sources."
-            )
-            raise ValueError(msg)
+        # Stated separately from the mapping above so a misfiled regime names the
+        # regime it actually violates rather than only the nature that forbids it.
+        for nature, regime in _IMPLIED_REGIME.items():
+            if self.nature is not nature and self.regime is regime:
+                msg = (
+                    f"Source {self.source_id!r} declares regime {regime.value!r} but is "
+                    f"{self.nature.value}; the {regime.value!r} regime contains only "
+                    f"{nature.value} sources."
+                )
+                raise ValueError(msg)
         if self.nature is SourceNature.REAL and self.consent_basis in {
             ConsentBasis.NONE_DECLARED,
             ConsentBasis.UNKNOWN,

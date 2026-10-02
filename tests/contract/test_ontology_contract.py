@@ -25,6 +25,7 @@ from psd.ontology.artifact import ontology_source_record
 from psd.ontology.registry import MAPPING_CONFIDENCE
 from psd.provenance.environment import EnvironmentSnapshot
 from psd.provenance.manifest import DatasetKind, DatasetManifest
+from psd.provenance.sources import DataRegime, SourceNature
 from psd.schema.models import (
     STATUS_BY_RESOLUTION_METHOD,
     ExerciseAliasRecord,
@@ -313,7 +314,60 @@ def test_a_reference_dataset_may_not_cite_sources() -> None:
             dataset_id="x",
             dataset_name="x",
             dataset_kind=DatasetKind.REFERENCE,
-            schema_version="psd-canonical/0.2.0",
+            schema_version="psd-canonical/0.3.0",
+            manifest_version="psd-manifest/0.1.0",
+            created_at=datetime(2021, 1, 1, tzinfo=UTC),
+            environment=environment,
+            sources=(ontology_source_record(ONTOLOGY.ontology_version.tag),),
+        )
+
+
+# ---------------------------------------------------------------------------
+# authored vocabulary is reference data, not simulator output
+# ---------------------------------------------------------------------------
+
+
+def test_the_ontology_source_record_is_classified_as_reference() -> None:
+    """The vocabulary was authored, so it is neither real nor generated athlete data.
+
+    Calling it ``synthetic``/``psd_sim`` would assert that a simulator produced it,
+    and would redefine ``synthetic`` as "not real athlete data" -- which is exactly the
+    distinction that has to stay sharp.
+    """
+    record = ontology_source_record(ONTOLOGY.ontology_version.tag)
+    assert record.nature is SourceNature.REFERENCE
+    assert record.regime is DataRegime.REFERENCE
+    assert record.nature is not SourceNature.SYNTHETIC
+    assert record.regime is not DataRegime.SIM
+
+
+def test_reference_and_sim_are_separate_classifications_in_the_vocabularies() -> None:
+    """Both are first-class members, and neither is a synonym for the other."""
+    assert "reference" in VOCABULARIES["source_nature"]
+    assert "synthetic" in VOCABULARIES["source_nature"]
+    assert "psd_reference" in VOCABULARIES["data_regime"]
+    assert "psd_sim" in VOCABULARIES["data_regime"]
+    assert SourceNature.REFERENCE.value != SourceNature.SYNTHETIC.value
+    assert DataRegime.REFERENCE.value != DataRegime.SIM.value
+
+
+def test_an_ingestion_dataset_may_not_cite_the_reference_registry() -> None:
+    """Registry rows are re-stamped on ingest, so the vocabulary is not a data source."""
+    environment = EnvironmentSnapshot(
+        python_version="3.12.0",
+        python_implementation="cpython",
+        platform="test",
+        package_version="0.1.0",
+        lockfile_sha256=None,
+        code_commit=None,
+        is_dirty_tree=None,
+    )
+    with pytest.raises(ValueError, match="cannot cite reference sources"):
+        DatasetManifest(
+            dataset_id="x",
+            dataset_name="x",
+            dataset_kind=DatasetKind.TRAINING_HISTORY,
+            schema_version="psd-canonical/0.3.0",
             manifest_version="psd-manifest/0.1.0",
             created_at=datetime(2021, 1, 1, tzinfo=UTC),
             environment=environment,

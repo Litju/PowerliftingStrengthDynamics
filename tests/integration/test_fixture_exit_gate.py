@@ -122,7 +122,7 @@ def test_fixture_builds_verifies_and_round_trips(
 
     summary = _build(source=source, dataset_dir=f"{name}-dataset", dataset_id=name, kind=kind)
 
-    assert summary.schema_version == "psd-canonical/0.2.0"
+    assert summary.schema_version == "psd-canonical/0.3.0"
     assert len(summary.artifacts) == len(table_names())
     assert _verify_ok(f"{name}-dataset")
 

@@ -130,13 +130,13 @@ class SchemaVersionError(ValueError):
 
 #: Version of the canonical Arrow/Parquet athlete-history schema.
 #:
-#: ``0.2.0`` is a minor, additive step: it adds the ``exercise_normalization``
-#: table and tightens the exercise descriptor columns from free text to
-#: controlled vocabularies. The persisted Arrow types of the tightened columns
-#: are unchanged (``string`` before and after), so existing artifacts remain
-#: readable and the version policy in this module classifies the change as
-#: additive rather than breaking.
-SCHEMA_VERSION = SchemaVersion(series="psd-canonical", major=0, minor=2, patch=0)
+#: ``0.3.0`` is a minor, additive step: ``source.nature`` and ``source.regime`` gain a
+#: ``reference`` member and ``psd_reference`` respectively, so authored vocabulary can
+#: be classified as itself rather than as simulator output. The persisted Arrow types
+#: of both columns are unchanged (``string`` before and after), existing artifacts
+#: remain readable, and no existing member changes meaning -- which is what the version
+#: policy in this module classifies as additive rather than breaking.
+SCHEMA_VERSION = SchemaVersion(series="psd-canonical", major=0, minor=3, patch=0)
 
 #: Version of the dataset/provenance manifest contract.
 MANIFEST_VERSION = SchemaVersion(series="psd-manifest", major=0, minor=1, patch=0)

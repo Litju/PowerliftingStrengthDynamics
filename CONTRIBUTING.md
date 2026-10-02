@@ -88,7 +88,10 @@ Changes must not break these. They are the reason the schema exists.
 3. A missing prescription is never inferred from execution.
 4. Absence is never encoded as zero unless zero is semantically correct.
 5. Ambiguous timestamps, athlete identity, and source values are flagged, not coerced.
-6. Real and synthetic data remain explicitly distinguishable.
+6. Real athlete data, simulator-generated athlete data, and authored reference
+   vocabulary remain explicitly distinguishable (`real`/`psd_real`,
+   `synthetic`/`psd_sim`, `reference`/`psd_reference`). A reference vocabulary is never
+   relabelled synthetic to make a rule pass.
 7. No physiological latent-state ontology is imposed on the benchmark.
 8. Provenance and missingness survive every transformation.
 9. Raw source values are preserved alongside normalized values.

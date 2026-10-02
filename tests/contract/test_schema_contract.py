@@ -240,4 +240,4 @@ def test_unknown_table_raises() -> None:
 
 
 def test_schema_version_is_reported() -> None:
-    assert SCHEMA_VERSION.tag == "psd-canonical/0.2.0"
+    assert SCHEMA_VERSION.tag == "psd-canonical/0.3.0"

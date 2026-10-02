@@ -81,15 +81,23 @@ def test_the_artifact_registers_its_own_source(dataset: CanonicalDataset) -> Non
     assert len(rows) == 1
     record = rows[0]
     assert record["origin_system"] == ONTOLOGY_SOURCE_SYSTEM
-    assert record["nature"] == SourceNature.SYNTHETIC.value
-    assert record["regime"] == DataRegime.SIM.value
+    assert record["nature"] == SourceNature.REFERENCE.value
+    assert record["regime"] == DataRegime.REFERENCE.value
 
 
-def test_the_registry_source_is_declared_synthetic_and_not_real_athlete_data() -> None:
-    """A vocabulary must never be readable as an observation about an athlete."""
-    record = ontology_source_record("psd-ontology/0.1.0")
-    assert record.nature is SourceNature.SYNTHETIC
-    assert record.regime is DataRegime.SIM
+def test_the_registry_source_is_reference_data_and_not_simulator_output() -> None:
+    """A vocabulary must be neither an observation nor a generated athlete record.
+
+    It was previously filed ``synthetic``/``psd_sim``, which made authored reference
+    data look like simulator output and left ``synthetic`` meaning "not real" instead
+    of "generated athlete observations".
+    """
+    record = ontology_source_record(ONTOLOGY.ontology_version.tag)
+    assert record.nature is SourceNature.REFERENCE
+    assert record.regime is DataRegime.REFERENCE
+    assert record.nature is not SourceNature.REAL
+    assert record.nature is not SourceNature.SYNTHETIC
+    assert record.regime is not DataRegime.SIM
 
 
 def test_the_dataset_id_and_path_derive_from_the_ontology_version() -> None:
@@ -282,7 +290,7 @@ def test_the_artifact_is_persisted_as_a_reference_dataset(tmp_path: Path) -> Non
     manifest = write_ontology(ONTOLOGY, data_root=tmp_path)
     assert isinstance(manifest, DatasetManifest)
     assert manifest.dataset_kind is DatasetKind.REFERENCE
-    assert manifest.schema_version == "psd-canonical/0.2.0"
+    assert manifest.schema_version == "psd-canonical/0.3.0"
     assert manifest.sources == ()
     assert len(manifest.artifacts) == len(table_names())
 
@@ -319,7 +327,7 @@ def test_persisted_artifacts_carry_schema_and_version_metadata(tmp_path: Path) -
     table = read_parquet(path, table_name="exercise_alias")
     metadata = table.schema.metadata or {}
     assert metadata[b"psd_table"] == b"exercise_alias"
-    assert metadata[b"psd_schema_version"] == b"psd-canonical/0.2.0"
+    assert metadata[b"psd_schema_version"] == b"psd-canonical/0.3.0"
     assert metadata[b"psd_id_scheme"] == b"psd-ids-v1"
     assert b"psd_column_order" in metadata
     artifact = next(item for item in manifest.artifacts if item.name == "exercise_alias")

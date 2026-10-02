@@ -200,7 +200,7 @@ def test_parquet_artifact_is_self_describing(tmp_path: Path) -> None:
     result = write_parquet(_ordered(_table()), tmp_path / "ps.parquet", table_name="performed_set")
     metadata = pq.ParquetFile(result.path).schema_arrow.metadata or {}
     assert metadata[b"psd_table"] == b"performed_set"
-    assert metadata[b"psd_schema_version"] == b"psd-canonical/0.2.0"
+    assert metadata[b"psd_schema_version"] == b"psd-canonical/0.3.0"
     assert metadata[b"psd_content_sha256"].decode() == result.content_sha256
 
 
