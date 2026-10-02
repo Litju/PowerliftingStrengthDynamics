@@ -22,6 +22,7 @@ from typing import Final
 from psd.provenance.sources import (
     ConsentBasis,
     DataRegime,
+    PublicationBasis,
     RedistributionPolicy,
     SourceNature,
 )
@@ -60,6 +61,7 @@ __all__ = (
     "PauseRule",
     "PrescriptionBasis",
     "ProgramModificationKind",
+    "PublicationBasis",
     "QualityFlag",
     "RangeOfMotion",
     "RedistributionPolicy",
@@ -867,6 +869,7 @@ VOCABULARIES: Final[dict[str, tuple[str, ...]]] = {
     "source_nature": tuple(member.value for member in SourceNature),
     "data_regime": tuple(member.value for member in DataRegime),
     "consent_basis": tuple(member.value for member in ConsentBasis),
+    "publication_basis": tuple(member.value for member in PublicationBasis),
     "redistribution": tuple(member.value for member in RedistributionPolicy),
     "mass_unit": ("kg", "lb"),
     "length_unit": ("cm", "in", "m"),

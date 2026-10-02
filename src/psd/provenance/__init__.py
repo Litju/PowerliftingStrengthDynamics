@@ -18,6 +18,7 @@ from psd.provenance.manifest import (
 from psd.provenance.sources import (
     ConsentBasis,
     DataRegime,
+    PublicationBasis,
     RedistributionPolicy,
     SourceNature,
     SourceRecord,
@@ -32,6 +33,7 @@ __all__ = (
     "EnvironmentSnapshot",
     "GitState",
     "LineageEntry",
+    "PublicationBasis",
     "RedistributionPolicy",
     "SourceNature",
     "SourceRecord",

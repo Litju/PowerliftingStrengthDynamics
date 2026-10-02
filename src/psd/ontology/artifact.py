@@ -53,6 +53,7 @@ from psd.provenance.manifest import DatasetKind, DatasetManifest
 from psd.provenance.sources import (
     ConsentBasis,
     DataRegime,
+    PublicationBasis,
     RedistributionPolicy,
     SourceNature,
     SourceRecord,
@@ -128,6 +129,7 @@ def ontology_source_record(version: str) -> SourceRecord:
         origin_system=ONTOLOGY_SOURCE_SYSTEM,
         dataset_version=version,
         license_id="apache-2.0",
+        publication_basis=PublicationBasis.AUTHORED_VOCABULARY,
         consent_basis=ConsentBasis.NONE_DECLARED,
         redistribution=RedistributionPolicy.ALLOWED,
         ingested_at=ONTOLOGY_EPOCH,

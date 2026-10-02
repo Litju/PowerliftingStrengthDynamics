@@ -247,6 +247,7 @@ TABLE_SPECS: tuple[TableSpec, ...] = (
             "snapshot_sha256",
             "license_id",
             "license_url",
+            "publication_basis",
             "consent_basis",
             "redistribution",
             "ingested_at",

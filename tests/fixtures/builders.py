@@ -23,11 +23,16 @@ from typing import Any, TypeVar, cast
 
 from pydantic import BaseModel
 
+from psd.ingest.openpowerlifting.source import (
+    OPENPOWERLIFTING_DATA_SERVICE_URL,
+    OPENPOWERLIFTING_LICENSE_ID,
+)
 from psd.ontology import default_ontology
 from psd.ontology.records import alias_records, definition_record_for
 from psd.provenance.sources import (
     ConsentBasis,
     DataRegime,
+    PublicationBasis,
     RedistributionPolicy,
     SourceNature,
     SourceRecord,
@@ -205,6 +210,7 @@ def add_source_records(
             origin_system="hevy",
             dataset_version="2024-01",
             license_id="proprietary-export",
+            publication_basis=PublicationBasis.PRIVATE_EXPORT,
             consent_basis=ConsentBasis.USER_CONSENT,
             redistribution=RedistributionPolicy.NOT_ALLOWED,
             snapshot_date=at(1),
@@ -212,17 +218,30 @@ def add_source_records(
         ),
         "competition": SourceRecord(
             source_id=ids.competition,
-            display_name="OpenPowerlifting export",
+            display_name="OpenPowerlifting bulk competition export",
             nature=SourceNature.REAL,
             regime=DataRegime.COMP,
             origin_system="openpowerlifting",
             dataset_version="2024.03",
-            license_id="cc-by-sa-4.0",
-            license_url="https://creativecommons.org/licenses/by-sa/4.0/",
-            consent_basis=ConsentBasis.PUBLIC_LICENSE,
+            # OpenPowerlifting dedicates all competition data to the public domain.
+            # There is no SPDX identifier for that, so this is a descriptive token,
+            # never a Creative Commons or copyleft license the source does not grant.
+            license_id=OPENPOWERLIFTING_LICENSE_ID,
+            license_url=OPENPOWERLIFTING_DATA_SERVICE_URL,
+            publication_basis=PublicationBasis.PUBLISHED_COMPETITION_RESULTS,
+            # Publicly archived results are a public record. Nobody asked these
+            # lifters to consent to an archive, and saying so would be a claim the
+            # source does not make.
+            consent_basis=ConsentBasis.PUBLIC_RECORD,
             redistribution=RedistributionPolicy.ALLOWED,
             snapshot_date=at(2),
             ingested_at=at(2),
+            notes=(
+                "OpenPowerlifting Data Service: all competition data are contributed to "
+                "the Public Domain and waived of copyright and related rights; attribution "
+                "is requested but not required. This is the data license, not the "
+                "project's own source-code licensing."
+            ),
         ),
         "synthetic": SourceRecord(
             source_id=ids.synthetic,
@@ -232,6 +251,10 @@ def add_source_records(
             origin_system="psd-sim",
             dataset_version="0.1.0",
             license_id="apache-2.0",
+            publication_basis=PublicationBasis.SIMULATOR_GENERATED,
+            # PSD authored these rows and released them under Apache-2.0. No athlete
+            # is involved at all, which is why this is a public-license basis rather
+            # than a public-record one.
             consent_basis=ConsentBasis.PUBLIC_LICENSE,
             redistribution=RedistributionPolicy.ALLOWED,
             ingested_at=at(0),

@@ -16,7 +16,7 @@ from psd.schema.version import (
 
 
 def test_version_tags_are_canonical() -> None:
-    assert SCHEMA_VERSION.tag == "psd-canonical/1.0.0"
+    assert SCHEMA_VERSION.tag == "psd-canonical/1.1.0"
     assert MANIFEST_VERSION.tag == "psd-manifest/0.1.0"
     assert ID_SCHEME == "psd-ids-v1"
 

@@ -37,6 +37,7 @@ def _source(**overrides: Any) -> dict[str, Any]:
         "snapshot_sha256": None,
         "license_id": "proprietary",
         "license_url": None,
+        "publication_basis": "private_export",
         "consent_basis": "user_consent",
         "redistribution": "not_allowed",
         "ingested_at": INGESTED_AT,
@@ -311,7 +312,11 @@ def test_synthetic_athlete_from_real_source_is_an_error() -> None:
 
 
 def test_real_athlete_from_synthetic_source_is_an_error() -> None:
-    tables = _tables(source=[_source(nature="synthetic", regime="psd_sim")])
+    tables = _tables(
+        source=[
+            _source(nature="synthetic", regime="psd_sim", publication_basis="simulator_generated")
+        ]
+    )
     report = validate_tables(tables)
     assert not report.ok
     assert "real_athlete_from_synthetic_source" in _codes(report)

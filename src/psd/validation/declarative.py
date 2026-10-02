@@ -62,6 +62,7 @@ VOCABULARY_BY_COLUMN: Mapping[tuple[str, str], str] = {
     ("source", "nature"): "source_nature",
     ("source", "regime"): "data_regime",
     ("source", "consent_basis"): "consent_basis",
+    ("source", "publication_basis"): "publication_basis",
     ("source", "redistribution"): "redistribution",
     ("athlete", "identity_status"): "identity_status",
     ("athlete", "sex_category"): "sex_category",

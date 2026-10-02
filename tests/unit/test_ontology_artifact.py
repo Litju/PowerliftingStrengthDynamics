@@ -303,7 +303,7 @@ def test_the_artifact_is_persisted_as_a_reference_dataset(tmp_path: Path) -> Non
     manifest = write_ontology(ONTOLOGY, data_root=tmp_path)
     assert isinstance(manifest, DatasetManifest)
     assert manifest.dataset_kind is DatasetKind.REFERENCE
-    assert manifest.schema_version == "psd-canonical/1.0.0"
+    assert manifest.schema_version == "psd-canonical/1.1.0"
     assert manifest.sources == ()
     assert len(manifest.artifacts) == len(table_names())
 
@@ -340,7 +340,7 @@ def test_persisted_artifacts_carry_schema_and_version_metadata(tmp_path: Path) -
     table = read_parquet(path, table_name="exercise_alias")
     metadata = table.schema.metadata or {}
     assert metadata[b"psd_table"] == b"exercise_alias"
-    assert metadata[b"psd_schema_version"] == b"psd-canonical/1.0.0"
+    assert metadata[b"psd_schema_version"] == b"psd-canonical/1.1.0"
     assert metadata[b"psd_id_scheme"] == b"psd-ids-v1"
     assert b"psd_column_order" in metadata
     artifact = next(item for item in manifest.artifacts if item.name == "exercise_alias")

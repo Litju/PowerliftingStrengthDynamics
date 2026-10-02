@@ -130,20 +130,27 @@ class SchemaVersionError(ValueError):
 
 #: Version of the canonical Arrow/Parquet athlete-history schema.
 #:
-#: ``1.0.0`` is a **major** bump under the policy above, and the reason is a removal
-#: rather than an addition: ``exercise_normalization.confidence`` is gone. The column
-#: carried a fixed float per resolution method (``1.0`` / ``0.8`` / ``0.7``) that was
-#: never calibrated against held-out labels, so a reader could reasonably have treated
-#: ``0.8`` as "correct 80% of the time". The mapping evidence it appeared to summarise
-#: -- the resolution method, the alias row a lookup matched, the candidates a refusal
-#: declined to choose between, the ambiguity reason -- is all retained, so the change
-#: costs no auditability; it only stops PSD publishing a number it never estimated.
-#: A removed field is a breaking change under this module's policy, so artifacts
-#: carrying it must be regenerated rather than migrated. The two steps before it were
-#: both additive: ``0.2.0`` added the ``exercise_normalization`` table and tightened
-#: descriptor columns from free text to controlled vocabularies, and ``0.3.0`` added the
-#: reference source classification.
-SCHEMA_VERSION = SchemaVersion(series="psd-canonical", major=1, minor=0, patch=0)
+#: ``1.1.0`` is a **minor** bump: the only change is an additive one. ``source`` gains
+#: ``publication_basis``, so a source can state *why* its data was published instead of
+#: borrowing the copyright axis or the athlete-consent axis to say so. The four axes a
+#: source must be able to keep apart -- copyright basis, publication basis, athlete
+#: consent, and redistribution rights -- were previously collapsed onto three columns,
+#: and a public-domain archive of published competition results had to be filed as
+#: athlete-consented merely because it was legally redistributable. Adding a nullable
+#: column changes no existing field's meaning, so artifacts remain readable by a reader
+#: at this minor version; the column is persisted in the declared order so no other
+#: table is affected. ``ConsentBasis`` also gains ``public_record``, which asserts a
+#: public record rather than a licence or a consent, and ``PublicationBasis`` is a new
+#: vocabulary, so neither changes the meaning of an existing member.
+#:
+#: The steps before it, for the record: ``0.2.0`` added the ``exercise_normalization``
+#: table and tightened descriptor columns from free text to controlled vocabularies,
+#: ``0.3.0`` added the reference source classification, and ``1.0.0`` was a **major**
+#: bump because ``exercise_normalization.confidence`` was *removed*: the column carried
+#: a fixed float per resolution method that was never calibrated against held-out
+#: labels, so a reader could reasonably have treated ``0.8`` as "correct 80% of the
+#: time". The mapping evidence it appeared to summarise is all retained.
+SCHEMA_VERSION = SchemaVersion(series="psd-canonical", major=1, minor=1, patch=0)
 
 #: Version of the dataset/provenance manifest contract.
 MANIFEST_VERSION = SchemaVersion(series="psd-manifest", major=0, minor=1, patch=0)
