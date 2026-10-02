@@ -9,6 +9,12 @@ because persisted artifacts must be sorted before they are hashed or written.
 rows can compare equal. DuckDB and SQL do not guarantee row order without
 ``ORDER BY``, and persisted artifacts must not depend on incidental row order.
 
+Every per-athlete competition table is ordered ``athlete_id`` first, so the whole
+corpus walks in longitudinal athlete order and one partition walk can serve all of
+them. That is not only tidier than a competition-major order: it is what lets a
+corpus build keep memory bounded, because partitioning on the leading sort column
+makes the partition walk *be* the canonical order.
+
 Category labels mirror the four semantic separations PSD requires:
 
 ``context``
@@ -811,7 +817,13 @@ TABLE_SPECS: tuple[TableSpec, ...] = (
             "is_opener",
         ),
         primary_key=("competition_attempt_id",),
-        order_by=("competition_id", "lift", "attempt_number", "competition_attempt_id"),
+        order_by=(
+            "athlete_id",
+            "competition_id",
+            "lift",
+            "attempt_number",
+            "competition_attempt_id",
+        ),
         category="competition",
         summary=(
             "Individual competition attempts; missing attempts stay missing. The "
@@ -837,7 +849,12 @@ TABLE_SPECS: tuple[TableSpec, ...] = (
             "derivation_note",
         ),
         primary_key=("competition_reported_result_id",),
-        order_by=("competition_id", "result_kind", "competition_reported_result_id"),
+        order_by=(
+            "athlete_id",
+            "competition_id",
+            "result_kind",
+            "competition_reported_result_id",
+        ),
         category="competition",
         summary=(
             "Reported or derived bests, totals, and scoring-system points, flagged as "

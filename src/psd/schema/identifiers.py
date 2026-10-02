@@ -32,7 +32,7 @@ downstream identifiers. That is intentional and is why the scheme is versioned.
 from __future__ import annotations
 
 import hashlib
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from enum import StrEnum
 
 from psd.schema.version import ID_SCHEME
@@ -40,6 +40,8 @@ from psd.schema.version import ID_SCHEME
 __all__ = (
     "IDENTIFIER_LENGTH",
     "IdPrefix",
+    "bulk_key",
+    "bulk_make_id",
     "derive_id",
     "id_key",
     "is_valid_id",
@@ -124,6 +126,79 @@ def make_id(prefix: IdPrefix, *parts: str | int | None) -> str:
 def derive_id(parent_id: str, prefix: IdPrefix, *parts: str | int | None) -> str:
     """Derive a child identifier from a parent identifier and local ordinals."""
     return make_id(prefix, parent_id, *parts)
+
+
+def _encode_part(part: str | int | None) -> str:
+    """Return the tagged, length-prefixed encoding of one identity part.
+
+    Matches :func:`id_key` exactly; kept as a separate helper so the two derivations
+    are visibly the same rule rather than two similar-looking ones.
+    """
+    if part is None:
+        return "n"
+    if isinstance(part, int) and not isinstance(part, bool):
+        return f"i{part}"
+    text = part if isinstance(part, str) else str(part)
+    return f"s{len(text)}:{text}"
+
+
+def bulk_make_id(prefix: IdPrefix, keys: Sequence[str]) -> list[str]:
+    """Derive one identifier per row from pre-encoded identity keys.
+
+    Byte-for-byte identical to ``[make_id(prefix, *key_parts) ...]``, and a property
+    test pins that equivalence against randomly generated parts. The reason this
+    exists is corpus scale: a multi-million-row competition source needs tens of
+    millions of identifiers, and a per-row call that re-encodes its own arguments
+    costs enough that identity generation would dominate the whole build. Encoding the
+    keys stays with the caller -- where a vectorized engine can do it for whole columns
+    at a time -- and this function is left as the hashing step alone.
+
+    Args:
+        prefix: Entity prefix.
+        keys: One :func:`id_key` result per row, in order.
+
+    Returns:
+        One ``<prefix>_<32 hex characters>`` identifier per row.
+    """
+    head = f"{ID_SCHEME}\x1f{prefix.value}\x1f"
+    sha256 = hashlib.sha256
+    tag = prefix.value
+    return [
+        f"{tag}_{sha256((head + key).encode('utf-8')).hexdigest()[:IDENTIFIER_LENGTH]}"
+        for key in keys
+    ]
+
+
+def bulk_key(*parts: Sequence[str | int | None]) -> list[str]:
+    """Return the :func:`id_key` encoding of column-wise parts, one per row.
+
+    The row-wise convenience twin of :func:`bulk_make_id`, for callers that hold
+    columns rather than keys. Useful for small inputs and for tests; a corpus-scale
+    transform builds keys with a vectorized engine and calls :func:`bulk_make_id`.
+
+    Args:
+        *parts: One sequence per structural part, most general first.
+
+    Returns:
+        One identity key per row.
+
+    Raises:
+        ValueError: The columns are not all the same length.
+    """
+    if not parts:
+        return [""]
+    lengths = {len(column) for column in parts}
+    if len(lengths) > 1:
+        msg = f"Identity columns must be the same length; got lengths {sorted(lengths)}."
+        raise ValueError(msg)
+    separator = _UNIT_SEPARATOR
+    if len(parts) == 1:
+        (only,) = parts
+        return [_encode_part(value) for value in only]
+    return [
+        separator.join(_encode_part(value) for value in values)
+        for values in zip(*parts, strict=True)
+    ]
 
 
 def is_valid_id(value: str, prefix: IdPrefix | None = None) -> bool:

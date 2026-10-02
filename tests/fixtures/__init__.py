@@ -21,6 +21,13 @@ Contents
 ``messy_timeline``
     A multi-year athlete timeline with programming changes, gaps, missing logs,
     deloads, taper weeks, and several meets -- the RES-235 exit gate.
+
+``openpowerlifting``
+    A source-shaped OpenPowerlifting CSV covering every edge case RES-237 names: failed
+    attempts, a fourth attempt, no-attempt lifters, a negative reported best, a
+    component-less total, non-placing participation codes, an approximate age, an
+    open-ended weight class, reduced events, a self-described sex category, an unsanctioned
+    meet, an unreadable source value, and a source-supplied name disambiguator.
 """
 
 from __future__ import annotations
@@ -47,6 +54,14 @@ from tests.fixtures.builders import (
 )
 from tests.fixtures.messy_timeline import messy_timeline_records
 from tests.fixtures.normal_history import normal_history_records
+from tests.fixtures.openpowerlifting import (
+    SAMPLE_CSV_NAME,
+    SAMPLE_ROW_COUNT,
+    edge_case_rows,
+    sample_csv_text,
+    write_sample_csv,
+    write_sample_snapshot,
+)
 
 __all__ = (
     "ATHLETE_ID",
@@ -54,6 +69,8 @@ __all__ = (
     "FIXTURE_ALIAS_SOURCE_SYSTEM",
     "FIXTURE_EXERCISE_KEYS",
     "HISTORY_START",
+    "SAMPLE_CSV_NAME",
+    "SAMPLE_ROW_COUNT",
     "HistoryBuilder",
     "SourceIds",
     "add_athlete",
@@ -64,10 +81,14 @@ __all__ = (
     "adversarial_history_records",
     "at",
     "counts",
+    "edge_case_rows",
     "kg",
     "lb",
     "messy_timeline_records",
     "normal_history_records",
     "program_version_of",
+    "sample_csv_text",
     "synthetic_records",
+    "write_sample_csv",
+    "write_sample_snapshot",
 )

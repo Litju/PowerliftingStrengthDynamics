@@ -762,10 +762,11 @@ class EquipmentClass(StrEnum):
     category. Federations and apps use different vocabularies; the raw value is
     always preserved alongside the normalized member.
 
-    ``MULTI_PLY`` and ``STRAPS_ALLOWED`` exist because federation vocabularies name
-    categories that ``CLASSIC_POWERLIFTING`` and ``SINGLE_PLY`` do not cover.
-    Folding equipped multi-ply into ``SINGLE_PLY`` would assert a distinction the
-    source explicitly draws, so the categories stay separate.
+    ``MULTI_PLY``, ``EQUIPPED_UNLIMITED`` and ``STRAPS_ALLOWED`` exist because
+    federation vocabularies name categories that ``CLASSIC_POWERLIFTING`` and
+    ``SINGLE_PLY`` do not cover. Folding equipped multi-ply into ``SINGLE_PLY`` would
+    assert a distinction the source explicitly draws, and collapsing unlimited rubber
+    gear into multi-ply suits would discard a difference the rules make.
     """
 
     RAW = "raw"
@@ -773,6 +774,9 @@ class EquipmentClass(StrEnum):
     CLASSIC_POWERLIFTING = "classic_powerlifting"
     SINGLE_PLY = "single_ply"
     MULTI_PLY = "multi_ply"
+    #: Equipped, multi-ply suits or rubberized gear. A separate category from
+    #: ``MULTI_PLY`` because it admits gear that is not a suit at all.
+    EQUIPPED_UNLIMITED = "unlimited"
     #: Competition classes where straps were permitted on the deadlift.
     STRAPS_ALLOWED = "straps_allowed"
     OTHER = "other"
