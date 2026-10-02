@@ -108,5 +108,19 @@ jobs:
           "$PSD" version
           "$PSD" schema version
           "$PSD" schema list
+
+      - name: Verify the corpus command group survives the wheel
+        shell: bash
+        run: |
+          set -euo pipefail
+          BIN=/tmp/psd-wheel-smoke/bin/psd
+          EXE=/tmp/psd-wheel-smoke/Scripts/psd.exe
+          if [ -x "$BIN" ]; then PSD="$BIN"; else PSD="$EXE"; fi
+          # Every subcommand is checked, not just the group. A command group whose
+          # subcommands are registered conditionally would import cleanly and then fail
+          # only for an operator, on a machine nobody re-tests by hand.
+          for command in acquire inspect build audit verify; do
+            "$PSD" openpowerlifting "$command" --help >/dev/null
+          done
         env:
           PSD_SMOKE_OK: "1"

@@ -161,6 +161,7 @@ psd validate    # validate a canonical dataset: declarative columns plus cross-r
 psd canonical   # build and verify canonical datasets; print provenance and checksum manifests
 psd inspect     # inspect persisted tables and athlete event timelines
 psd ontology    # inspect the exercise ontology; normalize raw labels; persist it
+psd openpowerlifting # acquire, build, audit, and verify the PSD-COMP competition corpus
 psd paths       # resolved external data-root layout
 psd version     # installed PSD version
 ```
@@ -175,7 +176,7 @@ lives only inside command functions.
 ## Repository status
 
 * **Stage:** pre-alpha (`Development Status :: 2 - Pre-Alpha`).
-* **Schema version:** `psd-canonical/1.0.0` — not a frozen public contract. The major
+* **Schema version:** `psd-canonical/1.1.0` — not a frozen public contract. The major
   bump removed `exercise_normalization.confidence`, an uncalibrated float that read as a
   probability; artifacts carrying it must be regenerated.
 * **Ontology version:** `psd-ontology/1.0.0`, alias registry
@@ -184,6 +185,72 @@ lives only inside command functions.
   competition-deadlift stance semantics and two alias bindings changed meaning.
 * **Design authority:** scientific design documents are *tentative*; the technical
   stack and engineering constraints document is *locked* for v0/Alpha.
+
+## PSD-COMP competition corpus
+
+`psd openpowerlifting` converts one pinned OpenPowerlifting bulk export into canonical
+competition tables plus per-athlete longitudinal histories. The pinned corpus is
+**4,036,909 source rows → 1,014,126 athletes, 64,350 meets, 13,948,408 attempts, and
+27,832,326 reported results**.
+
+```powershell
+uv run psd openpowerlifting acquire  # pin the snapshot by SHA-256, once
+uv run psd openpowerlifting inspect  # identity, revision, header, schema agreement
+uv run psd openpowerlifting build    # canonical tables + athlete histories
+uv run psd openpowerlifting audit    # durable corpus audit, JSON and Markdown
+uv run psd openpowerlifting verify   # source, artifacts, invariants
+```
+
+### What the corpus asserts, and what it deliberately refuses to
+
+Every source row becomes exactly one `competition`, which is a single **participation**.
+Two athletes at the same meet are two competitions; the meet they shared is a separate
+`competition_meet`. This is the only defensible reading of the export, and it has
+consequences worth stating:
+
+* **Attempt signs are reported, not resolved.** A negative best is a fact about the source,
+  and the audit counts them rather than silently correcting them.
+* **Missing attempts stay missing.** A blank cell is not a zero. 52.5% of competitions carry
+  attempt detail; the rest have none invented for them.
+* **Reported totals are kept as reported.** 330,115 competitions have a total that differs
+  from the sum of their bests. That is preserved and counted, not reconciled.
+* **Ambiguous identities stay ambiguous.** 2,082 names appear under more than one reported
+  sex category; the conflict is recorded on the athlete rather than resolved by guesswork.
+* **Participation codes are opaque.** `Place` is not modelled as a ranking.
+
+The audit reports all of this and **exits zero**: an unusual source is a fact to publish,
+not a build failure. A *contract* failure is different — expansion invariants, referential
+integrity, and duplicate keys fail `verify`.
+
+### Identity and meet rules
+
+Athlete identity is derived from the verbatim `Name` including its `#N` disambiguator, so
+one name under two sex categories is one athlete with a recorded conflict, not two people
+and not one silently chosen sex. A meet is identified by its start date, federation, and
+name, so 8,819 place-names that appear across more than one meet identity stay split rather
+than merged.
+
+### Reproducibility and memory
+
+Two builds of one snapshot produce **identical content digests for all 26 artifacts**,
+identical row counts, and identical counters. Physical Parquet bytes are *expected* to
+differ: a Parquet file is not a pure function of its rows. Identity is `content_sha256`;
+the byte digest is what `verify` measures.
+
+Staging partitions by the identity's leading **digest** character, which is what makes the
+partition walk the canonical order, and it splits into row positions rather than copying
+the chunk to hold one more column. A 16-partition staging pass over the full corpus takes
+about 35 seconds and produces 16 files.
+
+Full-corpus qualification:
+
+```powershell
+uv run python scripts/qualify_psd_comp.py --data-root <data-root> --digest <sha256> `
+    --report qualification.json
+```
+
+It builds twice, proves the two builds agree, audits, verifies through the shipped CLI, and
+writes a JSON report. Expect roughly 85 minutes.
 
 ## Contributing
 
