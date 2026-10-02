@@ -563,13 +563,32 @@ def _prepare_chunk(chunk: pl.DataFrame, *, source_id: str, first_row: int) -> pl
                 _part("Name", "__psd_nm"),
             ],
         ).alias(ATHLETE_KEY_COLUMN),
-        pl.concat_str(
-            [
-                _part(f"{NORMALIZED_PREFIX}{column}", f"__psd_m{index}")
-                for index, column in enumerate(MEET_IDENTITY_COLUMNS)
-            ],
-        ).alias(MEET_KEY_COLUMN),
+        pl.concat_str(_meet_key_expressions(source_id)).alias(MEET_KEY_COLUMN),
     )
+
+
+def _meet_key_expressions(source_id: str) -> list[pl.Expr]:
+    """Return the identity parts of a meet key, in order.
+
+    Declared once and used both where a staged row's meet identity is derived and where
+    the meet table is built from the staged rows. The two derivations must agree
+    byte-for-byte: when they disagree, every ``competition`` row points at a
+    ``competition_meet_id`` that does not exist, and **no digest catches it**, because both
+    tables are internally consistent. The audit's ``competitions_reference_a_meet``
+    invariant is what found that, and it can only exist because the check is cheap.
+
+    The source identifier leads, as it does for every other identity here, so two snapshots
+    of the same service cannot mint colliding meet identities and a meet's identity cannot
+    be derived without knowing which source it came from.
+    """
+    return [
+        _constant_part(source_id, "__psd_src"),
+        pl.lit(_UNIT_SEPARATOR),
+        *(
+            _part(f"{NORMALIZED_PREFIX}{column}", f"__psd_m{index}")
+            for index, column in enumerate(MEET_IDENTITY_COLUMNS)
+        ),
+    ]
 
 
 def _assign(
@@ -1271,19 +1290,9 @@ def _build_meets(staging: Path, *, source_id: str, ingested_at: datetime) -> pa.
             _nullable("Sanctioned").alias("sanctioned_status_raw"),
         ]
     )
-    keys = prepared.select(
-        pl.concat_str(
-            [
-                _constant_part(source_id, "__psd_s"),
-                pl.lit(_UNIT_SEPARATOR),
-                *[
-                    _part(f"{NORMALIZED_PREFIX}{column}", f"__psd_m{index}")
-                    for index, column in enumerate(MEET_IDENTITY_COLUMNS)
-                ],
-            ],
-        ).alias("__meet_key")
-    )
+    keys = prepared.select(pl.concat_str(_meet_key_expressions(source_id)).alias("__meet_key"))
     meet_ids = bulk_make_id(IdPrefix.COMPETITION_MEET, keys.get_column("__meet_key").to_list())
+    _require_staged_meet_identities(prepared, meet_ids)
     sanctioned = prepared.get_column("sanctioned_status_raw").to_list()
     frame = prepared.select(
         pl.Series("competition_meet_id", meet_ids, dtype=pl.String),
@@ -1307,6 +1316,36 @@ def _build_meets(staging: Path, *, source_id: str, ingested_at: datetime) -> pa.
     )
     ordered = _ordered("competition_meet", frame)
     return _collapse_meet_variants(ordered)
+
+
+def _require_staged_meet_identities(prepared: pl.DataFrame, meet_ids: Sequence[str]) -> None:
+    """Refuse a meet table whose identities disagree with the staged rows'.
+
+    The staged rows already carry the meet identity the staging pass derived, and every
+    ``competition`` row references it. Recomputing the identity here must reproduce those
+    values exactly. When it does not, the meet table and the competitions that point at it
+    disagree about what a meet is -- and nothing in the build notices, because each table
+    is separately well-formed and each digest is computed over its own rows.
+
+    Raises:
+        TransformError: A staged meet identity does not match the recomputed one.
+    """
+    staged = prepared.get_column(MEET_ID_COLUMN).to_list()
+    mismatched = [
+        (staged[index], derived)
+        for index, derived in enumerate(meet_ids)
+        if staged[index] != derived
+    ]
+    if mismatched:
+        example_staged, example_derived = mismatched[0]
+        msg = (
+            f"{len(mismatched)} staged meet identities disagree with the ones this pass "
+            f"derived from the same fields (for example staged {example_staged!r} vs "
+            f"derived {example_derived!r}). Every competition referencing a disagreeing "
+            "identity would point at a meet that does not exist, and both tables would "
+            "still pass every digest."
+        )
+        raise TransformError(msg)
 
 
 def _sanctioned_flags(values: Sequence[str | None]) -> list[bool | None]:

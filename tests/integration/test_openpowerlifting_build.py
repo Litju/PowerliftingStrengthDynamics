@@ -631,6 +631,22 @@ def test_meet_town_is_carried(built: Built) -> None:
     assert meet["meet_country"] == "USA"
 
 
+def test_every_competition_references_a_meet_that_exists(built: Built) -> None:
+    """A competition pointing at a meet that is not there is a dangling foreign key.
+
+    Nothing else in the build catches this. Meet identity is derived twice -- once while
+    staging, once while building the meet table -- and when the two derivations disagree
+    each table is still well formed and each digest still describes its own rows
+    correctly. Only a referential check sees it, and the corpus it produces is unusable:
+    no consumer can join a competition to the meet it happened at.
+    """
+    _result, rows = built
+    meet_ids = {row["competition_meet_id"] for row in rows["competition_meet"]}
+
+    assert {row["competition_meet_id"] for row in rows["competition"]} <= meet_ids
+    assert meet_ids
+
+
 def test_a_parent_federation_is_not_the_federation(built: Built) -> None:
     """``CPU`` competes under ``IPF``; collapsing the two would merge rival meets."""
     _result, rows = built
