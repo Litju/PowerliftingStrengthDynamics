@@ -48,7 +48,7 @@ from psd.provenance.sources import SourceRecord
 from psd.schema.registry import TableSpec, table_names, table_spec
 from psd.schema.version import SCHEMA_VERSION, SchemaVersion, assert_schema_readable
 from psd.serialization.canonical import content_digest
-from psd.serialization.ordering import canonical_order
+from psd.serialization.ordering import canonical_order, from_arrow_frame
 from psd.serialization.parquet import (
     ParquetWriteResult,
     read_parquet,
@@ -61,15 +61,20 @@ __all__ = (
     "CanonicalDataset",
     "DatasetLayoutError",
     "VerificationResult",
+    "artifact_paths",
     "build_dataset",
     "dataset_directory",
     "read_dataset",
+    "read_manifest",
     "verify_dataset",
     "write_dataset",
 )
 
 MANIFEST_NAME = "manifest.json"
 TABLES_DIRNAME = "tables"
+
+#: A table with fewer rows than this cannot hold a duplicate, so the key check skips it.
+_MINIMUM_ROWS_FOR_DUPLICATES = 2
 
 
 class DatasetLayoutError(ValueError):
@@ -322,6 +327,57 @@ def _parse_manifest(path: Path) -> DatasetManifest:
         raise DatasetLayoutError(msg) from error
 
 
+def read_manifest(
+    relative: Path | str,
+    *,
+    data_root: Path | None = None,
+) -> DatasetManifest:
+    """Read a dataset's manifest without loading any table.
+
+    A multi-million-row corpus cannot be read into memory just to learn what it
+    contains, and a caller that only needs the declared artifact set -- an audit, a
+    projection builder, a size report -- should not have to pay for the rows. This is
+    the manifest half of :func:`read_dataset`, with the same schema-version refusal.
+
+    Args:
+        relative: Dataset directory relative to the data root.
+        data_root: Explicit data root; resolved from the environment otherwise.
+
+    Returns:
+        The dataset's manifest.
+
+    Raises:
+        DatasetLayoutError: The manifest is missing, unreadable, or written at an
+            unreadable schema version.
+    """
+    manifest_path = _manifest_path(relative, data_root=data_root)
+    if not manifest_path.is_file():
+        msg = f"No dataset manifest at {manifest_path}."
+        raise DatasetLayoutError(msg)
+    manifest = _parse_manifest(manifest_path)
+    assert_schema_readable(SchemaVersion.parse(manifest.schema_version))
+    return manifest
+
+
+def artifact_paths(
+    manifest: DatasetManifest,
+    relative: Path | str,
+    *,
+    data_root: Path | None = None,
+) -> dict[str, Path]:
+    """Return the resolved on-disk path of every artifact a manifest declares.
+
+    The paths come from the manifest rather than from a naming convention, so a reader
+    follows the manifest even if an artifact was written under an unexpected name.
+    """
+    return {
+        artifact.name: resolve_within_data_root(
+            Path(relative) / artifact.relative_path, data_root=data_root
+        )
+        for artifact in manifest.artifacts
+    }
+
+
 def verify_dataset(
     relative: Path | str,
     *,
@@ -375,7 +431,14 @@ def _verify_artifact(
     *,
     data_root: Path | None,
 ) -> tuple[bool, list[str]]:
-    """Check one artifact's file digest and canonical content digest."""
+    """Check one artifact's file digest, canonical content digest, and key uniqueness.
+
+    The registry declares each table's key columns to be *unique within the table*, and
+    nothing else enforces it: both digests are computed over whatever rows the file
+    holds, so a table that duplicates a key still digests cleanly. A corpus with two rows
+    claiming one identity is internally consistent and scientifically wrong, which is the
+    failure mode digests cannot see.
+    """
     problems: list[str] = []
     path = resolve_within_data_root(Path(relative) / artifact.relative_path, data_root=data_root)
     if not path.is_file():
@@ -396,7 +459,28 @@ def _verify_artifact(
             f"{artifact.name}: content digest {expected} does not match manifest "
             f"{artifact.content_sha256}"
         )
+    problems.extend(_duplicate_key_problems(table, table_name=artifact.name))
     return not problems, problems
+
+
+def _duplicate_key_problems(table: pa.Table, *, table_name: str) -> list[str]:
+    """Return a problem description if the table's declared key is not unique.
+
+    Polars performs the check because it hashes rows in one streaming pass rather than
+    materialising a Python set of every key, which at corpus scale would be the most
+    expensive thing verification does. Fewer than two rows are trivially unique.
+    """
+    spec = table_spec(table_name)
+    if table.num_rows < _MINIMUM_ROWS_FOR_DUPLICATES:
+        return []
+    duplicated = from_arrow_frame(table.select(list(spec.primary_key))).is_duplicated().any()
+    if not bool(duplicated):
+        return []
+    key = ", ".join(spec.primary_key)
+    return [
+        f"{spec.name}: primary key ({key}) is not unique across {table.num_rows} rows; the "
+        f"registry declares those columns unique within the table"
+    ]
 
 
 def load_records(

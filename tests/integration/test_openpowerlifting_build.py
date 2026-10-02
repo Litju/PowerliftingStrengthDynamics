@@ -24,7 +24,11 @@ from typing import Any
 
 import pytest
 
-from psd.ingest.openpowerlifting.acquire import resolve_snapshot_csv
+from psd.ingest.openpowerlifting.acquire import (
+    acquire_snapshot_from_local_file,
+    resolve_snapshot_csv,
+)
+from psd.ingest.openpowerlifting.contract import SourceSchemaError, expected_columns
 from psd.ingest.openpowerlifting.snapshot import OpenPowerliftingSnapshot
 from psd.ingest.openpowerlifting.transform import (
     BuildConfig,
@@ -532,6 +536,51 @@ def test_one_name_under_two_sexes_is_one_flagged_identity(built: Built) -> None:
     assert lifters[0]["ambiguity_group_id"] == "opl-name-conflict:Hal Twofold"
 
 
+def test_one_conflicting_name_is_still_one_athlete_row(built: Built) -> None:
+    """A name reported twice under two sexes must not become two rows under one identity.
+
+    The identity is derived from the name, so two rows would share one ``athlete_id`` and
+    duplicate the primary key the registry declares unique. A corpus that passes every
+    digest check while putting two rows under one identity is internally consistent and
+    scientifically wrong, and only a key check catches it.
+    """
+    result, rows = built
+    identities = [row["athlete_id"] for row in rows["athlete"]]
+    source_names = {
+        row["source_athlete_key"]
+        for row in rows["athlete_source_link"]
+        if row["athlete_id"] == rows["athlete"][0]["athlete_id"]
+    }
+
+    assert len(identities) == len(set(identities)), "athlete primary key is not unique"
+    assert result.row_counts["athlete"] == len(set(identities))
+    assert len(source_names) == 1, "one identity was linked to more than one source name"
+
+
+def test_the_athlete_key_is_unique_across_the_corpus(built: Built) -> None:
+    """Every corpus table's declared key is unique, not only the athlete's."""
+    _result, rows = built
+    for table, key in (
+        ("athlete", ("athlete_id",)),
+        ("athlete_source_link", ("athlete_id", "source_id")),
+        ("competition", ("competition_id",)),
+        ("competition_attempt", ("competition_attempt_id",)),
+        ("competition_meet", ("competition_meet_id",)),
+        ("competition_reported_result", ("competition_reported_result_id",)),
+    ):
+        keys = [tuple(row[column] for column in key) for row in rows[table]]
+        assert len(keys) == len(set(keys)), f"{table} duplicates its primary key {key}"
+
+
+def test_one_competition_entry_belongs_to_exactly_one_athlete(built: Built) -> None:
+    """``competition_id`` identifies one source participation; it is keyed by athlete."""
+    _result, rows = built
+    by_competition: dict[str, str] = {}
+    for row in rows["competition"]:
+        existing = by_competition.setdefault(row["competition_id"], row["athlete_id"])
+        assert existing == row["athlete_id"], row["competition_id"]
+
+
 def test_every_competition_links_to_an_athlete(built: Built) -> None:
     _result, rows = built
     athlete_ids = {row["athlete_id"] for row in rows["athlete"]}
@@ -658,3 +707,59 @@ def test_the_declared_event_covers_every_attempt(built: Built) -> None:
     for competition_id, lifts in seen.items():
         event = str(by_competition[competition_id]["competition_event"])
         assert lifts <= _LIFTS_OF_EVENT[event]
+
+
+# ---------------------------------------------------------------------------
+# The contract is enforced before a row is read
+# ---------------------------------------------------------------------------
+
+
+def test_a_drifted_header_is_refused_before_any_row_is_read(tmp_path: Path) -> None:
+    """An extra column would be read and ignored; a corpus must not be built from that.
+
+    Without the check the transform would infer the unknown column's type, skip it, and
+    write a multi-million-row artifact that claims to be the declared corpus while
+    describing a different one.
+    """
+    data_root = tmp_path / "data"
+    drifted = tmp_path / "drifted.csv"
+    columns = expected_columns()
+    drifted.write_text(
+        ",".join((*columns, "Squat5Kg")) + "\nJohn,M,SBD,Raw,,,,,,,,,,\n",
+        encoding="utf-8",
+    )
+    snapshot = acquire_snapshot_from_local_file(drifted, data_root=data_root)
+
+    with pytest.raises(SourceSchemaError, match="unknown source column"):
+        build_corpus(
+            BuildRequest(
+                csv_path=resolve_snapshot_csv(snapshot, data_root=data_root),
+                snapshot=snapshot,
+                data_root=data_root,
+                config=CONFIG,
+                ingested_at=STAMP,
+            )
+        )
+
+
+def test_a_reordered_header_is_refused_too(tmp_path: Path) -> None:
+    """Row ordinals are the source-record keys, so a reorder changes what row N means."""
+    data_root = tmp_path / "data"
+    columns = expected_columns()
+    reordered = tmp_path / "reordered.csv"
+    reordered.write_text(
+        ",".join((columns[1], columns[0], *columns[2:])) + "\nM,John,,,,,,,\n",
+        encoding="utf-8",
+    )
+    snapshot = acquire_snapshot_from_local_file(reordered, data_root=data_root)
+
+    with pytest.raises(SourceSchemaError, match="different order"):
+        build_corpus(
+            BuildRequest(
+                csv_path=resolve_snapshot_csv(snapshot, data_root=data_root),
+                snapshot=snapshot,
+                data_root=data_root,
+                config=CONFIG,
+                ingested_at=STAMP,
+            )
+        )

@@ -206,6 +206,41 @@ def test_verify_detects_missing_artifact(tmp_path: Path) -> None:
     assert any("missing" in problem for problem in result.problems)
 
 
+def test_verify_detects_a_duplicated_primary_key(tmp_path: Path) -> None:
+    """A duplicated key digests cleanly, so verification has to look for it explicitly.
+
+    Both digests are computed over whatever rows a file holds. A table that puts two
+    rows under one identity therefore passes every digest check and is still wrong: a
+    consumer cannot tell a duplicated athlete from two athletes. The registry declares
+    each key unique within its table, so verification enforces it.
+    """
+    data_root, _relative = _minimal_dataset(tmp_path)
+    duplicate = _athlete()
+    duplicate["pseudonym"] = "athlete-001-again"
+    records = load_records(
+        _write_records(
+            tmp_path / "duplicated", {"source": [_source()], "athlete": [_athlete(), duplicate]}
+        )
+    )
+    write_dataset(
+        build_dataset(records, dataset_id="ds_dup", created_at=CREATED_AT),
+        Path("canonical") / "ds_dup",
+        DatasetWriteSpec(dataset_kind=DatasetKind.TRAINING_HISTORY),
+        data_root=data_root,
+    )
+
+    result = verify_dataset(Path("canonical") / "ds_dup", data_root=data_root)
+
+    assert not result.ok
+    assert any("primary key" in problem and "athlete_id" in problem for problem in result.problems)
+
+
+def test_a_single_rowed_table_needs_no_key_check(tmp_path: Path) -> None:
+    """The uniqueness check must not cost anything for a table that cannot fail it."""
+    data_root, relative = _minimal_dataset(tmp_path)
+    assert verify_dataset(relative, data_root=data_root).ok
+
+
 def test_write_is_reproducible(tmp_path: Path) -> None:
     first_root, first_relative = _minimal_dataset(tmp_path / "one")
     second_root, second_relative = _minimal_dataset(tmp_path / "two")

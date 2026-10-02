@@ -73,7 +73,11 @@ import polars as pl
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from psd.ingest.openpowerlifting.contract import expected_columns
+from psd.ingest.openpowerlifting.contract import (
+    expected_columns,
+    read_source_header,
+    require_source_schema,
+)
 from psd.ingest.openpowerlifting.mapping import (
     ATTEMPT_SPECS,
     EQUIPMENT_CLASS_BY_SOURCE,
@@ -845,10 +849,32 @@ def _build_athletes(
     picking one. Its sex is left absent, the record is flagged, and the name is given an
     ambiguity group: the source contradicts itself, and collapsing that into an attribute
     would hide the contradiction rather than record it.
+
+    One athlete row per **name**, not per name-and-sex pair. The identity is derived from
+    the name alone, so a name reported under two sex categories is one identity wearing
+    two rows -- which duplicates the ``athlete`` primary key and the
+    ``athlete_source_link`` key, and leaves a consumer unable to tell a duplicated
+    athlete from two athletes. Aggregating to the name first is what makes the declared
+    uniqueness true.
+
+    A conflict requires two *reported* sexes. A row that omits ``Sex`` and a row that
+    states one are not a contradiction: the source said nothing on one side, and an
+    absence is not a competing fact. Counting an absent sex as a variant would flag
+    ordinary partial reporting as an identity conflict.
     """
-    pairs = partition.select("Name", "Sex").unique()
-    conflicts = pairs.group_by("Name").agg(pl.len().cast(pl.Int64).alias("__sex_variants"))
-    resolved = pairs.join(conflicts, on="Name", how="left").sort("Name")
+    reported = partition.select(
+        _nullable("Sex").alias("Sex"),
+        pl.col("Name"),
+    ).unique()
+    resolved = (
+        reported.group_by("Name", maintain_order=True)
+        .agg(
+            # Only non-absent sexes are variants, so a blank Sex cannot invent a conflict.
+            pl.col("Sex").drop_nulls().n_unique().cast(pl.Int64).alias("__sex_variants"),
+            pl.col("Sex").drop_nulls().min().alias("__reported_sex"),
+        )
+        .sort("Name")
+    )
     keys = resolved.select(
         pl.concat_str(
             [
@@ -871,10 +897,12 @@ def _build_athletes(
         .alias("ambiguity_group_id"),
         pl.lit(False).alias("is_synthetic"),
         pl.lit(None, dtype=pl.String).alias("synthetic_regime"),
-        pl.when(ambiguous).then(None).otherwise(_nullable("Sex")).alias("sex_category_raw"),
+        pl.when(ambiguous).then(None).otherwise(pl.col("__reported_sex")).alias("sex_category_raw"),
         pl.when(ambiguous)
         .then(None)
-        .otherwise(_mapped("Sex", {k: v.value for k, v in SEX_CATEGORY_BY_SOURCE.items()}))
+        .otherwise(
+            _mapped("__reported_sex", {k: v.value for k, v in SEX_CATEGORY_BY_SOURCE.items()})
+        )
         .alias("sex_category"),
         # No birth year: a birth-year *class* is a bucket, not a year, and inferring one
         # from it would invent a fact the source never stated.
@@ -1484,6 +1512,12 @@ def build_corpus(request: BuildRequest) -> BuildResult:
     canonical tables in memory, and writes every canonical table with the same pinned
     Parquet profile the rest of PSD uses.
 
+    The declared source contract is enforced before any row is read. Without that check a
+    drifted header would be read with the transform's own expectations: a new column would
+    be inferred and then ignored, and a removed one would become nulls across a
+    multi-million-row corpus -- either way producing an artifact that claims to be the
+    same corpus while quietly describing a different one.
+
     Args:
         request: What to build, and where.
 
@@ -1491,11 +1525,13 @@ def build_corpus(request: BuildRequest) -> BuildResult:
         The build outcome, including the persisted manifest.
 
     Raises:
+        SourceSchemaError: The snapshot's header does not match the declared contract.
         TransformError: The source cannot be converted faithfully.
     """
     csv_path = request.csv_path
     snapshot = request.snapshot
     settings = request.config
+    require_source_schema(read_source_header(csv_path))
     started = time.perf_counter()
     stamp = request.ingested_at if request.ingested_at is not None else datetime.now(tz=UTC)
     source = openpowerlifting_source_record(snapshot, ingested_at=stamp)
