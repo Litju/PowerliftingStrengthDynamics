@@ -683,9 +683,9 @@ def _validate_resolution_ladder(record: ExerciseNormalizationRecord) -> None:
     """Check an outcome never claims more than it established.
 
     The ladder has one rule: an outcome that did not identify exactly one canonical
-    exercise must not carry that exercise, a confidence, an alias reference, or an
-    ambiguity reason that implies it did. Every check below exists to make
-    overstating an outcome impossible rather than merely discouraged.
+    exercise must not carry that exercise, an alias reference, or an ambiguity reason
+    that implies it did. Every check below exists to make overstating an outcome
+    impossible rather than merely discouraged.
     """
     status = record.resolution_status
     resolved = status in _RESOLVED_STATUSES
@@ -727,18 +727,8 @@ def _validate_resolution_ladder(record: ExerciseNormalizationRecord) -> None:
 
 
 def _validate_resolution_evidence(record: ExerciseNormalizationRecord) -> None:
-    """Check the confidence and alias reference match the resolution outcome."""
+    """Check the cited alias reference matches the resolution outcome."""
     resolved = record.resolution_status in _RESOLVED_STATUSES
-    if record.confidence is not None and not resolved:
-        msg = (
-            "confidence describes the strength of a mapping claim and may only be present on a "
-            "resolved outcome; an unresolved or ambiguous result has no claim to be confident "
-            "about"
-        )
-        raise ValueError(msg)
-    if resolved and record.confidence is None:
-        msg = "A resolved outcome must record its mapping confidence."
-        raise ValueError(msg)
     if record.source_alias_id is not None and not resolved:
         msg = (
             "source_alias_id points at a registered alias, so it is only meaningful for a "
@@ -778,10 +768,13 @@ class ExerciseNormalizationRecord(ContextRecord):
       reviewer can tell "the source was vague" apart from "PSD has never seen this
       label".
 
-    ``confidence`` describes the strength of the *mapping claim only* -- never the
-    training value of the exercise and never a transfer coefficient. It is fixed
-    per resolution method by the ontology, and it is null for every outcome that
-    does not name exactly one canonical exercise.
+    The evidence for a mapping is entirely symbolic: ``resolution_method`` names the
+    stage that produced it, ``source_alias_id`` cites the alias row a lookup matched,
+    and the two version columns name the ontology and registry that were in force.
+    There is deliberately **no** numeric mapping score. A float such as ``0.8`` would
+    read as a calibrated probability without ever having been calibrated against
+    held-out labels, so the contract omits the field rather than inventing a
+    calibration PSD cannot perform.
     """
 
     normalization_id: str = Field(min_length=1, max_length=160)
@@ -795,7 +788,6 @@ class ExerciseNormalizationRecord(ContextRecord):
     exercise_id: str | None = Field(default=None, max_length=160)
     parent_lift: ParentLift = ParentLift.UNKNOWN
     candidate_exercise_ids: tuple[str, ...] = ()
-    confidence: float | None = Field(default=None, ge=0.0, le=1.0)
     ambiguity_reason: AmbiguityReason | None = None
     mapping_version: str = Field(min_length=1, max_length=64)
     ontology_version: str = Field(min_length=1, max_length=64)

@@ -1,11 +1,9 @@
 """Unit tests for the ontology resolver: the ladder, ambiguity, and collisions.
 
-Every test here maps to one of the policies the resolver promises. Two groups carry
-most of the weight. The ambiguity group asserts that labels PSD *could* have mapped are
-still left open, because raising coverage is never a reason to invent a mapping. The
-deadlift group asserts that a competition-discipline label names a lift rather than a
-stance, because the rules prescribe neither a conventional nor a sumo stance and an
-ontology that says otherwise is making a claim about the sport.
+Every test here maps to one of the policies the resolver promises. The group that
+matters most is the ambiguity group: those tests assert that labels PSD *could* have
+mapped are still left open, because raising coverage is never a reason to invent a
+mapping.
 """
 
 from __future__ import annotations
@@ -23,7 +21,6 @@ from psd.ontology.catalog import (
 )
 from psd.ontology.registry import (
     DEFAULT_SOURCE_SYSTEM,
-    MAPPING_CONFIDENCE,
     AliasCollisionError,
     ExerciseOntology,
     OntologyError,
@@ -54,7 +51,6 @@ def test_a_canonical_name_resolves_by_identity() -> None:
     assert outcome.resolution_status is ResolutionStatus.EXACT_CANONICAL
     assert outcome.resolution_method is ResolutionMethod.CANONICAL_IDENTITY
     assert outcome.exercise_key == "low_bar_squat"
-    assert outcome.confidence == 1.0
 
 
 def test_a_canonical_key_resolves_by_identity() -> None:
@@ -83,7 +79,7 @@ def test_a_registered_alias_reports_its_namespace() -> None:
 
 
 def test_an_alias_only_another_namespace_knows_is_reported_as_cross_source() -> None:
-    """A weaker claim, and visibly weaker: the confidence drops and the method says so.
+    """A weaker evidence class, and the method is what says so.
 
     A different app's vocabulary may mean something subtly different, so the outcome
     names a concrete alias row rather than pretending the registry always knew this
@@ -91,10 +87,9 @@ def test_an_alias_only_another_namespace_knows_is_reported_as_cross_source() -> 
     not contain, so the identity stage cannot short-circuit it.
     """
     outcome = ONTOLOGY.resolve("SSB Squat", source_system="hevy")
-    expected = MAPPING_CONFIDENCE[ResolutionMethod.CROSS_SOURCE_ALIAS]
     assert outcome.resolution_method is ResolutionMethod.CROSS_SOURCE_ALIAS
-    assert outcome.confidence == expected
-    assert expected < MAPPING_CONFIDENCE[ResolutionMethod.REGISTERED_ALIAS]
+    assert outcome.source_alias_id is not None
+    assert outcome.exercise_key == "safety_bar_squat"
 
 
 def test_the_requesting_namespace_wins_over_a_cross_source_hit() -> None:
@@ -176,7 +171,7 @@ def test_underspecified_labels_are_never_forced_into_an_exercise(
     assert outcome.ambiguity_reason is reason
     assert outcome.exercise_key is None
     assert outcome.exercise_id is None
-    assert outcome.confidence is None
+    assert outcome.source_alias_id is None
 
 
 def test_an_ambiguity_lists_its_defensible_readings() -> None:

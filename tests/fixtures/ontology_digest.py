@@ -17,6 +17,12 @@ Updating it
 A change to the intended vocabulary should fail this test. Read the failure, confirm
 the change is intended, then replace the value below and say why in the commit message.
 Never regenerate it reflexively.
+
+``psd-ontology/1.0.0`` re-pinned this digest for three declared reasons: the
+competition-deadlift stance semantics changed, ``Competition Deadlift`` and
+``Deadlift (Conventional)`` were retargeted, and ``exercise_normalization`` lost the
+uncalibrated ``confidence`` column. All three change what the artifact means, which is
+exactly what a committed digest exists to make visible.
 """
 
 from __future__ import annotations
@@ -34,11 +40,11 @@ __all__ = ("EXPECTED_ONTOLOGY_DIGEST", "EXPECTED_TABLE_DIGESTS", "ontology_diges
 EXPECTED_TABLE_DIGESTS: dict[str, str] = {
     "exercise_definition": "84a7069051c3b9de2fea287d24aa4974d2d56546383780ee12b9557776bcccc7",
     "exercise_alias": "e7edf50280e1137d7351ca6643a769ee467645d35c4f2bcffaeb86819a960af3",
-    "exercise_normalization": "574bb7a5e02e30a8e9abe202835ec1c92499aaf8465f4aa429676c9eaf094d15",
+    "exercise_normalization": "8a24e2f97345073a88328be63c27e36073c28adb1194e207a25ff3381217a0c9",
 }
 
 #: A single digest over all three tables, in registry order.
-EXPECTED_ONTOLOGY_DIGEST: str = "9daf4f141f85000c05aef67a57afa377746f8b160d56c3d6af7dad13f9761f6c"
+EXPECTED_ONTOLOGY_DIGEST: str = "b7aa0fa75be0860280a0d5c14f3d5e42103d7c73de2eb7da1bc541059ed3f000"
 
 ONTOLOGY_TABLES: tuple[str, ...] = (
     "exercise_definition",

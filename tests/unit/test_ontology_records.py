@@ -25,6 +25,7 @@ from psd.ontology.records import (
 from psd.ontology.registry import DEFAULT_SOURCE_SYSTEM
 from psd.ontology.text import normalize_label
 from psd.schema.models import ExerciseNormalizationRecord
+from psd.schema.registry import column_order
 from psd.schema.vocabulary import (
     AmbiguityReason,
     ResolutionMethod,
@@ -152,20 +153,42 @@ def test_resolution_record_preserves_the_raw_label_and_the_rules_that_fired() ->
     assert record.normalization_rules == tuple(sorted(set(record.normalization_rules)))
 
 
-def test_resolved_record_names_the_canonical_exercise_and_a_confidence() -> None:
+def test_resolved_record_names_the_canonical_exercise_and_its_evidence() -> None:
     outcome = ONTOLOGY.resolve("Low Bar Squat")
     record = resolution_for(outcome, ontology=ONTOLOGY, ingested_at=INGESTED_AT)
     assert record.exercise_id == exercise_id_for("low_bar_squat")
-    assert record.confidence == outcome.confidence
+    assert record.resolution_method is outcome.resolution_method
+    assert record.resolution_status is outcome.resolution_status
     assert record.candidate_exercise_ids == ()
     assert record.ambiguity_reason is None
+
+
+def test_a_resolved_record_carries_no_numeric_mapping_score() -> None:
+    """The contract omits a confidence because none could be calibrated.
+
+    A float here would be read as a probability, so the field must be absent from the
+    model *and* from the persisted column set rather than merely left null.
+    """
+    outcome = ONTOLOGY.resolve("Low Bar Squat")
+    record = resolution_for(outcome, ontology=ONTOLOGY, ingested_at=INGESTED_AT)
+    assert "confidence" not in ExerciseNormalizationRecord.model_fields
+    assert "confidence" not in record.model_dump()
+    assert "confidence" not in column_order("exercise_normalization")
+
+
+def test_an_alias_backed_record_cites_the_alias_row_it_matched() -> None:
+    """The evidence for a lookup is a concrete artifact, not a number."""
+    outcome = ONTOLOGY.resolve("CGBP", source_system="hevy")
+    record = resolution_for(outcome, ontology=ONTOLOGY, ingested_at=INGESTED_AT)
+    assert record.resolution_method is ResolutionMethod.REGISTERED_ALIAS
+    assert record.source_alias_id == outcome.source_alias_id
 
 
 def test_ambiguous_record_names_candidates_and_no_exercise() -> None:
     outcome = ONTOLOGY.resolve("Machine press")
     record = resolution_for(outcome, ontology=ONTOLOGY, ingested_at=INGESTED_AT)
     assert record.exercise_id is None
-    assert record.confidence is None
+    assert record.source_alias_id is None
     assert record.candidate_exercise_ids == tuple(
         sorted(exercise_id_for(key) for key in outcome.candidate_keys)
     )
@@ -238,7 +261,6 @@ def _record(**overrides: object) -> ExerciseNormalizationRecord:
         "resolution_status": ResolutionStatus.RESOLVED_ALIAS,
         "resolution_method": ResolutionMethod.REGISTERED_ALIAS,
         "exercise_id": exercise_id_for("low_bar_squat"),
-        "confidence": 1.0,
         "mapping_version": ONTOLOGY.alias_registry_version.tag,
         "ontology_version": ONTOLOGY.ontology_version.tag,
         "ingested_at": INGESTED_AT,
@@ -248,21 +270,12 @@ def _record(**overrides: object) -> ExerciseNormalizationRecord:
     return ExerciseNormalizationRecord.model_validate(base)
 
 
-def test_a_resolved_outcome_requires_a_confidence() -> None:
-    with pytest.raises(ValueError, match="must record its mapping confidence"):
-        _record(confidence=None)
-
-
-def test_an_unresolved_outcome_rejects_a_confidence() -> None:
-    with pytest.raises(ValueError, match="may only be present on a resolved outcome"):
-        _record(
-            resolution_status=ResolutionStatus.AMBIGUOUS,
-            resolution_method=ResolutionMethod.CURATED_AMBIGUOUS,
-            exercise_id=None,
-            confidence=0.9,
-            ambiguity_reason=AmbiguityReason.UNSPECIFIED_MACHINE,
-            candidate_exercise_ids=(exercise_id_for("bench"),),
-        )
+def test_the_contract_has_no_field_for_a_numeric_mapping_score() -> None:
+    """Extra keys are forbidden, so the retired score cannot creep back in."""
+    with pytest.raises(ValueError, match="confidence"):
+        _record(confidence=1.0)
+    with pytest.raises(ValueError, match="confidence"):
+        _record(mapping_confidence=0.8)
 
 
 def test_an_unresolved_outcome_rejects_naming_an_exercise() -> None:
@@ -270,7 +283,6 @@ def test_an_unresolved_outcome_rejects_naming_an_exercise() -> None:
         _record(
             resolution_status=ResolutionStatus.UNMAPPED,
             resolution_method=ResolutionMethod.NO_MATCH,
-            confidence=None,
             ambiguity_reason=AmbiguityReason.UNKNOWN_SOURCE_TAXONOMY,
         )
 
@@ -286,7 +298,6 @@ def test_an_ambiguity_requires_at_least_one_candidate() -> None:
             resolution_status=ResolutionStatus.AMBIGUOUS,
             resolution_method=ResolutionMethod.CURATED_AMBIGUOUS,
             exercise_id=None,
-            confidence=None,
             ambiguity_reason=AmbiguityReason.UNSPECIFIED_MACHINE,
         )
 
@@ -297,7 +308,6 @@ def test_an_unresolved_outcome_rejects_an_alias_reference() -> None:
             resolution_status=ResolutionStatus.UNMAPPED,
             resolution_method=ResolutionMethod.NO_MATCH,
             exercise_id=None,
-            confidence=None,
             ambiguity_reason=AmbiguityReason.UNKNOWN_SOURCE_TAXONOMY,
             source_alias_id="exa_" + "0" * 32,
         )
@@ -318,7 +328,6 @@ def test_candidate_and_rule_lists_are_deduplicated_and_sorted() -> None:
         resolution_status=ResolutionStatus.AMBIGUOUS,
         resolution_method=ResolutionMethod.CURATED_AMBIGUOUS,
         exercise_id=None,
-        confidence=None,
         ambiguity_reason=AmbiguityReason.UNSPECIFIED_MACHINE,
         candidate_exercise_ids=tuple(
             reversed([exercise_id_for("bench"), exercise_id_for("incline_bench")])

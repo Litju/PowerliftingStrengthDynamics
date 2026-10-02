@@ -10,7 +10,7 @@ Three overlays run over each table:
 
 * **schema conformance** -- every canonical column present, no extras, and the
   Polars dtype equal to the canonical Arrow type;
-* **numeric ranges and positivity** -- ordinals, RPE/RIR, percentages,
+* **numeric ranges and positivity** -- ordinals, RPE/RIR, percentages, link
   confidences, velocities, and a strict positivity rule for every load column,
   because zero is a missing-value sentinel rather than a load;
 * **controlled-vocabulary membership** -- every enum column must hold only
@@ -135,7 +135,6 @@ COLUMN_RANGES: Mapping[str, tuple[float, float]] = {
     "target_percent_one_rm": (0.0, 100.0),
     "velocity_loss_percent": (0.0, 100.0),
     "link_confidence": (0.0, 1.0),
-    "confidence": (0.0, 1.0),
     "attempt_number": (1.0, 3.0),
     "birth_year": (1900.0, 2100.0),
     "mean_velocity_mps": (0.0, 20.0),

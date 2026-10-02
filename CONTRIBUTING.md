@@ -98,6 +98,9 @@ Changes must not break these. They are the reason the schema exists.
 10. Persisted artifacts have explicit canonical ordering before hashing or writing.
 11. PyArrow/Parquet is the persisted schema boundary; Polars is the transformation engine.
 12. No random row/set-level splits may enter the data layer.
+13. No numeric score is published without calibration behind it. A value that would read
+    as a probability without being estimated is omitted, not replaced by another
+    arbitrary number.
 
 ## Issues and pull requests
 

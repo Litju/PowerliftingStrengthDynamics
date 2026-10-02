@@ -47,7 +47,6 @@ def _outcome_payload(outcome: NormalizationOutcome) -> dict[str, object]:
         "exercise_id": outcome.exercise_id,
         "parent_lift": outcome.parent_lift.value,
         "candidate_keys": list(outcome.candidate_keys),
-        "confidence": outcome.confidence,
         "ambiguity_reason": None
         if outcome.ambiguity_reason is None
         else (outcome.ambiguity_reason.value),

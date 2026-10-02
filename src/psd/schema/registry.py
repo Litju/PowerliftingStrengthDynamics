@@ -426,7 +426,6 @@ TABLE_SPECS: tuple[TableSpec, ...] = (
             "exercise_id",
             "parent_lift",
             "candidate_exercise_ids",
-            "confidence",
             "ambiguity_reason",
             "mapping_version",
             "ontology_version",
@@ -438,7 +437,8 @@ TABLE_SPECS: tuple[TableSpec, ...] = (
         category="semantics",
         summary=(
             "Deterministic normalization outcomes for raw labels, including the "
-            "ambiguous and unmapped ones."
+            "ambiguous and unmapped ones. Mapping evidence is symbolic: the resolution "
+            "method plus, for a lookup, the alias row it matched."
         ),
     ),
     TableSpec(

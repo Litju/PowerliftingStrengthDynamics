@@ -130,13 +130,20 @@ class SchemaVersionError(ValueError):
 
 #: Version of the canonical Arrow/Parquet athlete-history schema.
 #:
-#: ``0.3.0`` is a minor, additive step: ``source.nature`` and ``source.regime`` gain a
-#: ``reference`` member and ``psd_reference`` respectively, so authored vocabulary can
-#: be classified as itself rather than as simulator output. The persisted Arrow types
-#: of both columns are unchanged (``string`` before and after), existing artifacts
-#: remain readable, and no existing member changes meaning -- which is what the version
-#: policy in this module classifies as additive rather than breaking.
-SCHEMA_VERSION = SchemaVersion(series="psd-canonical", major=0, minor=3, patch=0)
+#: ``1.0.0`` is a **major** bump under the policy above, and the reason is a removal
+#: rather than an addition: ``exercise_normalization.confidence`` is gone. The column
+#: carried a fixed float per resolution method (``1.0`` / ``0.8`` / ``0.7``) that was
+#: never calibrated against held-out labels, so a reader could reasonably have treated
+#: ``0.8`` as "correct 80% of the time". The mapping evidence it appeared to summarise
+#: -- the resolution method, the alias row a lookup matched, the candidates a refusal
+#: declined to choose between, the ambiguity reason -- is all retained, so the change
+#: costs no auditability; it only stops PSD publishing a number it never estimated.
+#: A removed field is a breaking change under this module's policy, so artifacts
+#: carrying it must be regenerated rather than migrated. The two steps before it were
+#: both additive: ``0.2.0`` added the ``exercise_normalization`` table and tightened
+#: descriptor columns from free text to controlled vocabularies, and ``0.3.0`` added the
+#: reference source classification.
+SCHEMA_VERSION = SchemaVersion(series="psd-canonical", major=1, minor=0, patch=0)
 
 #: Version of the dataset/provenance manifest contract.
 MANIFEST_VERSION = SchemaVersion(series="psd-manifest", major=0, minor=1, patch=0)

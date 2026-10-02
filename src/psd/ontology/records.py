@@ -18,6 +18,11 @@ Alias rows for a *provisional* namespace carry
 representative of a logging vocabulary rather than confirmed vendor exports. The
 flag is data, not a comment: it survives into the Parquet artifact where a
 downstream consumer can act on it.
+
+Mapping rows carry no numeric score. The evidence for a mapping is
+``resolution_method``, the alias row a lookup matched, the candidates a refusal
+declined to choose between, and the ambiguity reason -- all of which this module
+copies through verbatim.
 """
 
 from __future__ import annotations
@@ -240,7 +245,6 @@ def resolution_for(
         candidate_exercise_ids=tuple(
             sorted(exercise_id_for(key) for key in outcome.candidate_keys)
         ),
-        confidence=outcome.confidence,
         ambiguity_reason=outcome.ambiguity_reason,
         mapping_version=ontology.alias_registry_version.tag,
         ontology_version=ontology.ontology_version.tag,

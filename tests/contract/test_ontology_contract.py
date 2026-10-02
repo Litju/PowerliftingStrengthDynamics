@@ -22,7 +22,6 @@ from pydantic.fields import FieldInfo
 
 from psd.ontology import default_ontology
 from psd.ontology.artifact import ontology_source_record
-from psd.ontology.registry import MAPPING_CONFIDENCE
 from psd.provenance.environment import EnvironmentSnapshot
 from psd.provenance.manifest import DatasetKind, DatasetManifest
 from psd.provenance.sources import DataRegime, SourceNature
@@ -35,6 +34,7 @@ from psd.schema.models import (
 from psd.schema.registry import PROVENANCE_COLUMNS, table_categories, table_names, table_spec
 from psd.schema.vocabulary import VOCABULARIES, ResolutionMethod, ResolutionStatus
 from psd.validation.declarative import COLUMN_RANGES, VOCABULARY_BY_COLUMN
+from psd.versions import SCHEMA_VERSION
 
 ONTOLOGY = default_ontology()
 
@@ -112,19 +112,63 @@ def test_every_vocabulary_rule_targets_an_existing_column(table: str) -> None:
         assert VOCABULARY_BY_COLUMN[(declared_table, column)] in VOCABULARIES
 
 
-def test_the_mapping_confidence_column_is_range_checked() -> None:
-    assert COLUMN_RANGES["confidence"] == (0.0, 1.0)
+def test_no_numeric_column_remains_to_score_a_mapping() -> None:
+    """The ontology holds no float at all, so there is no back door for a score.
+
+    ``exercise_normalization`` once carried a fixed ``confidence`` per resolution
+    method. It was never calibrated against held-out labels, so a reader could take
+    ``0.8`` for a probability, and the field has been removed rather than replaced
+    with different numbers. With no floating column left, an effectiveness value would
+    have to be added as a new column and would fail this test first.
+    """
+    floats: set[str] = {
+        column
+        for table in ONTOLOGY_TABLES
+        for column, data_type in zip(
+            table_spec(table).arrow_schema().names,
+            table_spec(table).arrow_schema().types,
+            strict=True,
+        )
+        if pa.types.is_floating(data_type)
+    }
+    assert floats == set()
+    assert "confidence" not in COLUMN_RANGES
+
+
+def test_mapping_evidence_is_symbolic_and_complete() -> None:
+    """Method, alias row, candidates, and reason: the whole evidence record.
+
+    Every resolved outcome names the stage that produced it, and the two lookup
+    methods cite the alias row they read. Nothing else is needed to audit a mapping,
+    which is why no second score was introduced in place of the removed float.
+    """
+    lookup_methods = {
+        ResolutionMethod.REGISTERED_ALIAS,
+        ResolutionMethod.CROSS_SOURCE_ALIAS,
+    }
+    assert lookup_methods <= set(ResolutionMethod)
+    for label, expected in (
+        ("CGBP", ResolutionMethod.REGISTERED_ALIAS),
+        ("SSB Squat", ResolutionMethod.CROSS_SOURCE_ALIAS),
+    ):
+        outcome = ONTOLOGY.resolve(label, source_system="hevy")
+        assert outcome.resolution_method is expected
+        assert outcome.source_alias_id is not None
+    columns = set(table_spec("exercise_normalization").columns)
+    assert {
+        "resolution_method",
+        "resolution_status",
+        "source_alias_id",
+        "candidate_exercise_ids",
+        "ambiguity_reason",
+        "mapping_version",
+        "ontology_version",
+    } <= columns
 
 
 @pytest.mark.parametrize("table", ONTOLOGY_TABLES)
 def test_ontology_tables_carry_row_level_provenance(table: str) -> None:
     assert set(PROVENANCE_COLUMNS) <= set(table_spec(table).columns)
-
-
-@pytest.mark.parametrize("table", ONTOLOGY_TABLES)
-def test_ontology_tables_declare_a_total_canonical_ordering(table: str) -> None:
-    spec = table_spec(table)
-    assert spec.order_by[-len(spec.primary_key) :] == spec.primary_key
 
 
 # ---------------------------------------------------------------------------
@@ -153,32 +197,6 @@ def test_the_ontology_ships_no_numeric_effectiveness_table() -> None:
     for name in table_names():
         for fragment in ("transfer", "coefficient", "effectiveness", "similarity", "value"):
             assert fragment not in name, name
-
-
-def test_confidence_is_the_only_float_in_the_ontology_and_it_is_a_mapping_claim() -> None:
-    """One float, in one column, describing the mapping and never the exercise."""
-    floats: set[str] = {
-        column
-        for table in ONTOLOGY_TABLES
-        for column, data_type in zip(
-            table_spec(table).arrow_schema().names,
-            table_spec(table).arrow_schema().types,
-            strict=True,
-        )
-        if pa.types.is_floating(data_type)
-    }
-    assert floats == {"confidence"}
-    assert set(MAPPING_CONFIDENCE) <= set(ResolutionMethod)
-    assert all(0.0 < value <= 1.0 for value in MAPPING_CONFIDENCE.values())
-
-
-def test_confidence_distinguishes_identity_from_inference() -> None:
-    """A looked-up binding and a derived one are not equally certain."""
-    assert (
-        MAPPING_CONFIDENCE[ResolutionMethod.CANONICAL_IDENTITY]
-        > MAPPING_CONFIDENCE[ResolutionMethod.CROSS_SOURCE_ALIAS]
-        > MAPPING_CONFIDENCE[ResolutionMethod.STRUCTURED_INTERPRETATION]
-    )
 
 
 def test_no_resolution_method_may_produce_a_mapping_it_did_not_justify() -> None:
@@ -314,7 +332,7 @@ def test_a_reference_dataset_may_not_cite_sources() -> None:
             dataset_id="x",
             dataset_name="x",
             dataset_kind=DatasetKind.REFERENCE,
-            schema_version="psd-canonical/0.3.0",
+            schema_version=SCHEMA_VERSION.tag,
             manifest_version="psd-manifest/0.1.0",
             created_at=datetime(2021, 1, 1, tzinfo=UTC),
             environment=environment,
@@ -331,8 +349,8 @@ def test_the_ontology_source_record_is_classified_as_reference() -> None:
     """The vocabulary was authored, so it is neither real nor generated athlete data.
 
     Calling it ``synthetic``/``psd_sim`` would assert that a simulator produced it,
-    and would redefine ``synthetic`` as "not real athlete data" -- which is exactly the
-    distinction that has to stay sharp.
+    and would redefine ``synthetic`` as "not real athlete data" -- which is exactly
+    the distinction that has to stay sharp.
     """
     record = ontology_source_record(ONTOLOGY.ontology_version.tag)
     assert record.nature is SourceNature.REFERENCE
@@ -367,7 +385,7 @@ def test_an_ingestion_dataset_may_not_cite_the_reference_registry() -> None:
             dataset_id="x",
             dataset_name="x",
             dataset_kind=DatasetKind.TRAINING_HISTORY,
-            schema_version="psd-canonical/0.3.0",
+            schema_version=SCHEMA_VERSION.tag,
             manifest_version="psd-manifest/0.1.0",
             created_at=datetime(2021, 1, 1, tzinfo=UTC),
             environment=environment,

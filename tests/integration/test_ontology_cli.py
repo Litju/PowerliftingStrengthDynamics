@@ -127,22 +127,20 @@ def test_resolve_json_exposes_the_whole_outcome() -> None:
     assert payload["ambiguity_reason"] == "question_form_label"
     assert payload["candidate_keys"] == ["leg_press"]
     assert payload["exercise_key"] is None
-    assert payload["confidence"] is None
 
 
-def test_resolve_accepts_several_labels_at_once() -> None:
-    result = runner.invoke(ontology_app, ["resolve", "Bench", "Machine press", "--json"])
-    assert result.exit_code == 1
-    payload = json.loads(result.stdout)
-    assert len(payload) == 2
-    assert payload[0]["resolution_status"] == "exact_canonical"
-    assert payload[1]["resolution_status"] == "ambiguous"
+def test_resolve_json_carries_no_numeric_mapping_score() -> None:
+    """The payload publishes mapping evidence as symbols, never as a float.
 
-
-def test_resolve_reports_the_source_system_it_used() -> None:
-    result = runner.invoke(ontology_app, ["resolve", "CGBP", "--source", "hevy", "--json"])
+    A machine-readable ``confidence`` would invite a consumer to treat it as a
+    calibrated probability, so the key is absent rather than null.
+    """
+    result = runner.invoke(ontology_app, ["resolve", "Low Bar Squat", "--json"])
     assert result.exit_code == 0, result.output
-    assert json.loads(result.stdout)[0]["source_system"] == "hevy"
+    payload = json.loads(result.stdout)[0]
+    assert "confidence" not in payload
+    assert payload["resolution_method"] == "canonical_identity"
+    assert payload["resolution_status"] == "exact_canonical"
 
 
 def test_resolve_reports_the_competition_deadlift_as_a_lift_not_a_stance() -> None:
@@ -165,6 +163,21 @@ def test_resolve_keeps_every_deadlift_stance_distinct(label: str, expected: str)
     result = runner.invoke(ontology_app, ["resolve", label, "--json"])
     assert result.exit_code == 0, result.output
     assert json.loads(result.stdout)[0]["exercise_key"] == expected
+
+
+def test_resolve_accepts_several_labels_at_once() -> None:
+    result = runner.invoke(ontology_app, ["resolve", "Bench", "Machine press", "--json"])
+    assert result.exit_code == 1
+    payload = json.loads(result.stdout)
+    assert len(payload) == 2
+    assert payload[0]["resolution_status"] == "exact_canonical"
+    assert payload[1]["resolution_status"] == "ambiguous"
+
+
+def test_resolve_reports_the_source_system_it_used() -> None:
+    result = runner.invoke(ontology_app, ["resolve", "CGBP", "--source", "hevy", "--json"])
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout)[0]["source_system"] == "hevy"
 
 
 def test_coverage_summarises_resolutions_and_refusals() -> None:
@@ -232,7 +245,7 @@ def test_build_json_prints_the_manifest() -> None:
     assert result.exit_code == 0, result.output
     payload = json.loads(result.stdout)
     assert payload["dataset_kind"] == "reference"
-    assert payload["schema_version"] == "psd-canonical/0.3.0"
+    assert payload["schema_version"] == "psd-canonical/1.0.0"
     assert len(payload["artifacts"]) == len(table_names())
     assert payload["sources"] == []
 

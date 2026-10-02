@@ -11,6 +11,10 @@ rather than about one label. Three properties genuinely need it:
   outcome always carries exactly one -- which is the invariant that keeps an
   unresolved label from leaking into a mapping.
 
+Mapping evidence is symbolic, so the properties assert it as provenance rather than
+as a number: a lookup-backed resolution cites the alias row it read, and no other
+method cites one. There is no numeric mapping score to test, by design.
+
 Everything else about the vocabulary is covered by example-based tests, where an
 invented string proves nothing about powerlifting.
 """
@@ -23,7 +27,6 @@ from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
 from psd.ontology import default_ontology
-from psd.ontology.registry import MAPPING_CONFIDENCE
 from psd.ontology.text import normalize_label
 from psd.schema.vocabulary import ResolutionMethod, ResolutionStatus
 
@@ -94,6 +97,9 @@ SOURCE_SYSTEMS = st.sampled_from(["psd_registry", "hevy", "strong", "generic_csv
 
 RESOLVED = {ResolutionStatus.EXACT_CANONICAL, ResolutionStatus.RESOLVED_ALIAS}
 
+#: Methods whose evidence is a row in the alias registry, so they must cite one.
+LOOKUP_METHODS = {ResolutionMethod.REGISTERED_ALIAS, ResolutionMethod.CROSS_SOURCE_ALIAS}
+
 
 @given(LABELS)
 @PROPERTY
@@ -138,21 +144,19 @@ def test_the_raw_label_always_survives(label: str, source: str) -> None:
 def test_a_resolution_names_exactly_one_exercise_and_nothing_else(label: str, source: str) -> None:
     """The ladder's central invariant, stated over every label.
 
-    A resolved outcome has exactly one exercise, no candidates, and a confidence. An
-    unresolved one has no exercise and no confidence. Nothing in between is possible,
-    so a label can never half-resolve into a plausible-looking mapping.
+    A resolved outcome has exactly one exercise, no candidates, and a stated reason
+    for nothing. An unresolved one has no exercise and an explicit reason. Nothing in
+    between is possible, so a label can never half-resolve into a plausible-looking
+    mapping.
     """
     outcome = ONTOLOGY.resolve(label, source_system=source)
     if outcome.resolution_status in RESOLVED:
         assert outcome.exercise_key is not None
         assert outcome.exercise_id is not None
         assert outcome.candidate_keys == ()
-        assert outcome.confidence is not None
-        assert outcome.confidence > 0.0
     else:
         assert outcome.exercise_key is None
         assert outcome.exercise_id is None
-        assert outcome.confidence is None
         assert outcome.ambiguity_reason is not None
 
 
@@ -181,18 +185,21 @@ def test_candidates_are_sorted_deduplicated_and_exclude_the_resolution(
 
 @given(LABELS, SOURCE_SYSTEMS)
 @PROPERTY
-def test_confidence_is_fixed_by_the_method_and_never_a_transfer_score(
-    label: str, source: str
-) -> None:
-    """Confidence describes the mapping claim and is read off a frozen table.
+def test_lookup_methods_cite_the_alias_row_they_matched(label: str, source: str) -> None:
+    """Mapping evidence is symbolic and traceable, never a number.
 
-    It is not computed from anything about the exercise, which is what keeps it from
-    drifting into a statement about training value.
+    A resolution backed by the alias registry names the row it read, so a reviewer can
+    check the binding without re-deriving it. A resolution produced by parsing the
+    label cites nothing, because no row states that binding -- which is exactly the
+    difference between a lookup and an inference, and why PSD does not compress the
+    two into a score.
     """
     outcome = ONTOLOGY.resolve(label, source_system=source)
-    if outcome.confidence is not None:
-        assert outcome.confidence == MAPPING_CONFIDENCE[outcome.resolution_method]
-        assert 0.0 < outcome.confidence <= 1.0
+    if outcome.resolution_method in LOOKUP_METHODS:
+        assert outcome.resolution_status in RESOLVED
+        assert outcome.source_alias_id is not None
+    else:
+        assert outcome.source_alias_id is None
 
 
 @given(LABELS)
@@ -233,15 +240,14 @@ def test_a_trailing_question_mark_never_yields_a_mapping(label: str, source: str
     """A source that wrote a question is never answered with a canonical exercise.
 
     The doubt may land as an ambiguity, when there is a candidate to record, or as an
-    honest unmapped when there is not. Either way the outcome carries no exercise and
-    no confidence, which is the whole point of the policy.
+    honest unmapped when there is not. Either way the outcome carries no exercise,
+    which is the whole point of the policy.
     """
     if not label.rstrip().endswith("?"):
         return
     outcome = ONTOLOGY.resolve(label, source_system=source)
     assert outcome.resolution_status not in RESOLVED
     assert outcome.exercise_key is None
-    assert outcome.confidence is None
     assert outcome.ambiguity_reason is not None
 
 

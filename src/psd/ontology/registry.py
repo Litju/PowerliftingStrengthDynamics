@@ -61,15 +61,22 @@ the same text and mean different exercises, the registry refuses to be built. Th
 is stricter than strictly necessary, and deliberately so: it means a lookup can
 never depend on which source happened to register the spelling first.
 
-Confidence
-----------
+Mapping evidence
+----------------
 
-``confidence`` is the strength of the *mapping claim*, not a physiological quantity
-and not a transfer coefficient. It is fixed per resolution method by
-:data:`MAPPING_CONFIDENCE` and is absent from every outcome that does not name
-exactly one canonical exercise. Nothing in this module asserts how much any
-exercise is worth or how response transfers between them; models are left to learn
-that from the descriptors PSD does publish.
+The strength of a mapping claim is recorded *symbolically*, by which stage produced
+it: :class:`~psd.schema.vocabulary.ResolutionMethod` says whether the label already
+was the canonical identity, matched a registered alias row, matched a row belonging to
+another namespace, or was read for descriptors and matched exactly one exercise. A
+lookup-backed resolution additionally cites the alias row it looked up, so the claim
+can be traced to a concrete artifact.
+
+There is deliberately **no** numeric mapping score. A fixed number per method would
+look like a probability without being one: nothing calibrates it against held-out
+labels, and a downstream consumer reading ``0.8`` as "correct 80% of the time" would be
+reading a number PSD never estimated. Nothing in this module asserts how much any
+exercise is worth or how response transfers between them; models are left to learn that
+from the descriptors PSD does publish.
 """
 
 from __future__ import annotations
@@ -101,7 +108,6 @@ from psd.versions import ALIAS_REGISTRY_VERSION, ONTOLOGY_VERSION, SchemaVersion
 
 __all__ = (
     "DEFAULT_SOURCE_SYSTEM",
-    "MAPPING_CONFIDENCE",
     "AliasBinding",
     "AliasCollisionError",
     "ExerciseOntology",
@@ -122,21 +128,6 @@ _NEUTRAL_MEMBER: Final[str] = "unknown"
 #: namespace means a bare label is answered by the canonical vocabulary rather than
 #: by any particular vendor's spelling habits.
 DEFAULT_SOURCE_SYSTEM: Final[str] = "psd_registry"
-
-#: Mapping-claim strength per resolution method.
-#:
-#: An exact identity or a registered alias is a claim the registry backs with a
-#: row. A cross-source alias is weaker: the label matched, but a different app's
-#: vocabulary may mean something subtly different. Structured interpretation is
-#: weaker still: the label's descriptors matched exactly one existing exercise, but
-#: no row states that binding. None of these numbers says anything about an
-#: exercise's training value.
-MAPPING_CONFIDENCE: Final[Mapping[ResolutionMethod, float]] = {
-    ResolutionMethod.CANONICAL_IDENTITY: 1.0,
-    ResolutionMethod.REGISTERED_ALIAS: 1.0,
-    ResolutionMethod.CROSS_SOURCE_ALIAS: 0.8,
-    ResolutionMethod.STRUCTURED_INTERPRETATION: 0.7,
-}
 
 #: Tokens that say "some variation of" without saying which. Their presence caps a
 #: label at family level, however specific the rest of it looks.
@@ -200,9 +191,12 @@ class NormalizationOutcome:
         parent_lift: The family, when a family was identifiable.
         candidate_keys: The defensible readings PSD declined to choose between,
             sorted so the list is deterministic.
-        confidence: Strength of the mapping claim; ``None`` unless resolved.
         ambiguity_reason: Why no canonical exercise was forced.
         source_alias_id: The alias row that matched, when one did.
+
+    Every field is either identity, provenance, or an explicit refusal. There is no
+    numeric score: the evidence is the resolution method plus, for a lookup, the alias
+    row it read.
     """
 
     raw_label: str
@@ -215,7 +209,6 @@ class NormalizationOutcome:
     exercise_id: str | None = None
     parent_lift: ParentLift = ParentLift.UNKNOWN
     candidate_keys: tuple[str, ...] = ()
-    confidence: float | None = None
     ambiguity_reason: AmbiguityReason | None = None
     source_alias_id: str | None = None
 
@@ -403,7 +396,7 @@ class ExerciseOntology:
             source_system: Namespace to resolve against. A binding registered in
                 this namespace is reported as a registered alias; a label that only
                 another namespace binds still resolves, but is reported as a
-                cross-source hit with a weaker confidence.
+                cross-source hit, which names a weaker evidence class.
 
         Returns:
             The outcome: either exactly one canonical exercise, or a structured
@@ -817,7 +810,6 @@ def _resolved(
         resolution_method=method,
         exercise_key=key,
         exercise_id=exercise_id_for(key),
-        confidence=MAPPING_CONFIDENCE[method],
         source_alias_id=source_alias_id,
     )
 
@@ -825,8 +817,8 @@ def _resolved(
 def _finish(base: _Base, verdict: _Verdict) -> NormalizationOutcome:
     """Return the outcome for a verdict that named no canonical exercise.
 
-    Every unresolved path goes through here, and none of them carries a confidence:
-    a result that declined to map a label has no mapping claim to be confident about.
+    Every unresolved path goes through here, and none of them carries an alias
+    reference: a result that declined to map a label has no mapping claim to trace.
     """
     return NormalizationOutcome(
         raw_label=base.raw_label,
@@ -856,7 +848,6 @@ def _downgrade_to_question(outcome: NormalizationOutcome) -> NormalizationOutcom
         exercise_key=None,
         exercise_id=None,
         candidate_keys=(outcome.exercise_key,) if outcome.exercise_key is not None else (),
-        confidence=None,
         ambiguity_reason=AmbiguityReason.QUESTION_FORM_LABEL,
         source_alias_id=None,
     )

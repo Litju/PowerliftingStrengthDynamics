@@ -281,12 +281,13 @@ def test_exercise_definition_persists_no_numeric_effectiveness_column() -> None:
         assert name not in column_order("exercise_normalization")
 
 
-def test_only_confidence_is_numeric_and_it_describes_the_mapping() -> None:
-    """``confidence`` is the one float, and it qualifies the mapping, not the exercise.
+def test_no_exercise_table_holds_a_numeric_column_at_all() -> None:
+    """Not one float, so there is no back door for a per-exercise or per-mapping score.
 
-    It is the *only* numeric column across the three exercise tables, and it is
-    required on a resolved outcome and forbidden everywhere else, so it cannot become
-    a back door for a per-exercise score.
+    ``exercise_normalization`` once carried a fixed ``confidence`` per resolution
+    method. It was never calibrated, so the field was removed rather than retuned,
+    and this asserts the stronger property that makes that stick: adding any numeric
+    effectiveness or confidence column to these three tables now fails here first.
     """
 
     for table in ("exercise_definition", "exercise_alias", "exercise_normalization"):
@@ -294,9 +295,9 @@ def test_only_confidence_is_numeric_and_it_describes_the_mapping() -> None:
         numeric = [
             name
             for name, data_type in zip(schema.names, schema.types, strict=True)
-            if pa.types.is_floating(data_type)
+            if pa.types.is_floating(data_type) or pa.types.is_integer(data_type)
         ]
-        assert numeric == (["confidence"] if table == "exercise_normalization" else []), table
+        assert numeric == [], table
 
 
 # ---------------------------------------------------------------------------
@@ -477,7 +478,7 @@ def test_required_forms_resolve_from_every_source_namespace(
 ) -> None:
     """The required vocabulary must resolve regardless of which app wrote it.
 
-    Cross-namespace resolution is reported with a weaker confidence rather than
+    A cross-namespace resolution is reported as a cross-source hit rather than
     refused, because the alias is unambiguous even when this namespace never spelled
     it that way.
     """

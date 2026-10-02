@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+from psd.schema.registry import table_spec
 from psd.schema.version import (
     ID_SCHEME,
     MANIFEST_VERSION,
@@ -15,13 +16,13 @@ from psd.schema.version import (
 
 
 def test_version_tags_are_canonical() -> None:
-    assert SCHEMA_VERSION.tag == "psd-canonical/0.3.0"
+    assert SCHEMA_VERSION.tag == "psd-canonical/1.0.0"
     assert MANIFEST_VERSION.tag == "psd-manifest/0.1.0"
     assert ID_SCHEME == "psd-ids-v1"
 
 
 def test_parse_round_trip() -> None:
-    assert SchemaVersion.parse("psd-canonical/0.3.0") == SCHEMA_VERSION
+    assert SchemaVersion.parse(SCHEMA_VERSION.tag) == SCHEMA_VERSION
 
 
 @pytest.mark.parametrize(
@@ -47,10 +48,31 @@ def test_newer_minor_is_unreadable_by_older_reader() -> None:
 
 
 def test_major_release_is_not_readable_by_minor_reader() -> None:
-    artifact = SchemaVersion(series="psd-canonical", major=1, minor=0, patch=0)
-    assert not artifact.is_readable_by(SCHEMA_VERSION)
+    """A removed column is a breaking change, so it moves the major.
+
+    ``1.0.0`` removed ``exercise_normalization.confidence``. The policy above classes a
+    removed field as breaking, and this asserts the machinery enforces that reading
+    rather than letting a reader silently accept the next incompatible major.
+    """
+    assert SCHEMA_VERSION.major == 1
+    future = SchemaVersion(series=SCHEMA_VERSION.series, major=2, minor=0, patch=0)
+    assert not future.is_readable_by(SCHEMA_VERSION)
     with pytest.raises(SchemaVersionError, match="Refusing to reinterpret"):
-        assert_schema_readable(artifact)
+        assert_schema_readable(future)
+
+
+def test_the_retired_minor_artifacts_are_still_inside_the_ordering() -> None:
+    """``0.2.0`` precedes ``1.0.0``; the schema gate, not the ordering, does the work.
+
+    ``is_readable_by`` is the coarse policy statement. The enforcement is Arrow schema
+    equality plus the recorded ``psd_schema_version`` on read, so an artifact written
+    before the removal is refused by the column set it carries rather than by an
+    ordering comparison that would call a ``0.x`` artifact readable.
+    """
+    retired = SchemaVersion(series="psd-canonical", major=0, minor=2, patch=0)
+    assert retired.is_readable_by(SCHEMA_VERSION)
+    columns = table_spec("exercise_normalization").arrow_schema().names
+    assert "confidence" not in columns
 
 
 def test_different_series_is_not_readable() -> None:

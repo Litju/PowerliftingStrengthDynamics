@@ -162,16 +162,29 @@ def test_the_artifact_persists_the_deliberate_refusals(
         assert by_label[label]["ambiguity_reason"], label
 
 
-def test_the_artifact_persists_no_confidence_for_a_refusal(
+def test_the_artifact_persists_the_mapping_evidence_for_every_outcome(
     dataset: CanonicalDataset,
 ) -> None:
-    rows = _normalization_rows(dataset)
-    for row in rows:
-        if row["resolution_status"] not in {
-            ResolutionStatus.EXACT_CANONICAL.value,
-            ResolutionStatus.RESOLVED_ALIAS.value,
-        }:
-            assert row["confidence"] is None, row["raw_label"]
+    """Method, alias row, candidates, reason: the whole record, and no score.
+
+    The retired ``confidence`` column was a fixed float per method with no empirical
+    calibration. What replaces it is not another number but the provenance already
+    carried: every row names the stage that produced it, and a lookup cites its row.
+    """
+    resolved = {
+        ResolutionStatus.EXACT_CANONICAL.value,
+        ResolutionStatus.RESOLVED_ALIAS.value,
+    }
+    lookup_methods = {"registered_alias", "cross_source_alias"}
+    for row in _normalization_rows(dataset):
+        assert row["resolution_method"], row["raw_label"]
+        if row["resolution_method"] in lookup_methods:
+            assert row["source_alias_id"], row["raw_label"]
+            assert row["resolution_status"] in resolved, row["raw_label"]
+        if row["resolution_status"] not in resolved:
+            assert row["source_alias_id"] is None, row["raw_label"]
+            assert row["ambiguity_reason"], row["raw_label"]
+    assert "confidence" not in dataset.table("exercise_normalization").schema.names
 
 
 def test_the_artifact_preserves_every_raw_label_verbatim(
@@ -290,7 +303,7 @@ def test_the_artifact_is_persisted_as_a_reference_dataset(tmp_path: Path) -> Non
     manifest = write_ontology(ONTOLOGY, data_root=tmp_path)
     assert isinstance(manifest, DatasetManifest)
     assert manifest.dataset_kind is DatasetKind.REFERENCE
-    assert manifest.schema_version == "psd-canonical/0.3.0"
+    assert manifest.schema_version == "psd-canonical/1.0.0"
     assert manifest.sources == ()
     assert len(manifest.artifacts) == len(table_names())
 
@@ -327,7 +340,7 @@ def test_persisted_artifacts_carry_schema_and_version_metadata(tmp_path: Path) -
     table = read_parquet(path, table_name="exercise_alias")
     metadata = table.schema.metadata or {}
     assert metadata[b"psd_table"] == b"exercise_alias"
-    assert metadata[b"psd_schema_version"] == b"psd-canonical/0.3.0"
+    assert metadata[b"psd_schema_version"] == b"psd-canonical/1.0.0"
     assert metadata[b"psd_id_scheme"] == b"psd-ids-v1"
     assert b"psd_column_order" in metadata
     artifact = next(item for item in manifest.artifacts if item.name == "exercise_alias")

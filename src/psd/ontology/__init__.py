@@ -18,6 +18,11 @@ The separation it enforces is:
   resolved, or ambiguous -- with a reason and, where they exist, the candidate
   readings PSD declined to choose between.
 
+The evidence for a mapping is symbolic: the resolution method that produced it, plus
+the alias row a lookup matched. There is no numeric mapping score, because a fixed
+float per method would read as a calibrated probability without ever having been
+calibrated.
+
 What this package will not do
 -----------------------------
 
@@ -52,7 +57,6 @@ from psd.ontology.catalog import (
 from psd.ontology.interpret import ParsedFeatures, parse_features
 from psd.ontology.registry import (
     DEFAULT_SOURCE_SYSTEM,
-    MAPPING_CONFIDENCE,
     AliasBinding,
     AliasCollisionError,
     ExerciseOntology,
@@ -71,7 +75,6 @@ __all__ = (
     "CURATED_AMBIGUOUS_LABELS",
     "DEFAULT_SOURCE_SYSTEM",
     "EXERCISES",
-    "MAPPING_CONFIDENCE",
     "ONTOLOGY_VERSION",
     "PROBE_LABELS",
     "PROVISIONAL_SOURCE_SYSTEMS",

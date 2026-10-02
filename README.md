@@ -26,6 +26,7 @@ is subordinate to them.
 | No zero-as-missing | Absence is `null` plus an explicit missingness reason. Zero is only used when zero is semantically correct (for example, `0` repetitions completed on a failed set). |
 | No silent coercion | Ambiguous timestamps, ambiguous athlete identity, and ambiguous source values are flagged, not guessed. |
 | Real, simulated, and authored stay separable | Simulator ground truth is labelled `synthetic`/`psd_sim` and is never projected onto real athletes as validated physiology; authored vocabulary is labelled `reference`/`psd_reference` and is never presented as either. |
+| No uncalibrated numbers | A published numeric score must be one PSD actually estimated. Where a number would read as a probability without being calibrated, the field is omitted rather than invented. |
 | No imposed latent-state ontology | The benchmark does not require any particular decomposition of latent physiological state. |
 | Provenance and missingness survive | Raw source values and source identity are preserved alongside normalized representations. |
 
@@ -64,11 +65,6 @@ first defensible answer wins. A stage that cannot name one canonical exercise re
 upgrade it. Coverage is a property of the vocabulary, not a licence to guess, so
 `Machine press`, `Bench variation`, and `Leg press?` stay open on purpose.
 
-The ontology describes what an exercise is and never what it is worth: it records no
-transfer coefficient, no specificity score, and no statement that one variation
-substitutes for another. Models learn those relationships from the published
-descriptors.
-
 **A competition label names a lift, not a stance.** `Competition Squat`, `Competition
 Bench`, and `Competition Deadlift` resolve to the bare competition lift, because the
 rules define each lift by grip, start, and the completed erect position rather than by
@@ -80,6 +76,18 @@ while `conventional_deadlift` and `sumo_deadlift` are two stance-qualified varia
 of it — both `competition_variation`, symmetrically, neither privileged. A source that
 does state a stance gets the stance-qualified entity, exactly as `Low Bar Squat` gets
 `low_bar_squat`.
+
+**Mapping evidence is symbolic.** `exercise_normalization` records the resolution
+method that produced the outcome, the alias row a lookup matched, the candidates a
+refusal declined to choose between, the ambiguity reason, and the two versions in
+force. There is deliberately **no** numeric mapping score: a fixed float per method
+would read as a calibrated probability without ever having been calibrated against
+held-out labels, so the field is absent rather than retuned.
+
+The ontology describes what an exercise is and never what it is worth: it records no
+transfer coefficient, no specificity score, no per-exercise number of any kind, and no
+statement that one variation substitutes for another. Models learn those relationships
+from the published descriptors.
 
 The ontology is **authored reference data**. Its manifest is `DatasetKind.REFERENCE`,
 its one `source` row is `SourceNature.REFERENCE` / `DataRegime.REFERENCE`, and
@@ -167,11 +175,13 @@ lives only inside command functions.
 ## Repository status
 
 * **Stage:** pre-alpha (`Development Status :: 2 - Pre-Alpha`).
-* **Schema version:** `psd-canonical/0.3.0` — not a frozen public contract.
+* **Schema version:** `psd-canonical/1.0.0` — not a frozen public contract. The major
+  bump removed `exercise_normalization.confidence`, an uncalibrated float that read as a
+  probability; artifacts carrying it must be regenerated.
 * **Ontology version:** `psd-ontology/1.0.0`, alias registry
   `psd-ontology-alias/1.0.0` — tracked separately, because adding a source alias must
   not imply that a canonical exercise identity changed. Both are major because the
-  competition-deadlift stance semantics changed and two alias bindings were retargeted.
+  competition-deadlift stance semantics and two alias bindings changed meaning.
 * **Design authority:** scientific design documents are *tentative*; the technical
   stack and engineering constraints document is *locked* for v0/Alpha.
 
