@@ -10,6 +10,13 @@ The shapes matter. A table smaller than one row group, a table spanning several,
 with no rows at all, and a table fed in batches of awkward sizes all behave differently in a
 Parquet writer, and the awkward case is the one that would otherwise be discovered during a
 multi-hour corpus build.
+
+Only part of this module runs on the self-hosted Windows parity gate. The whole-shape
+sweep is worth having and costs minutes of wall clock compressing 65,536-row groups, so it
+stays on the hosted Linux gate; what *is* a platform contract -- the streaming-versus-
+single-shot digest agreement, the empty-table self-description, and every refusal --
+is marked ``windows_parity`` and runs there. The unmarked tests are deliberately the
+expensive ones, not the important ones.
 """
 
 from __future__ import annotations
@@ -120,8 +127,10 @@ def _compare(path: Path, table: pa.Table) -> None:
 @pytest.mark.parametrize(
     ("rows", "batch_size"),
     [
-        pytest.param(0, ROW_GROUP, id="no-rows"),
-        pytest.param(1, ROW_GROUP, id="single-row"),
+        # The two degenerate shapes are the cheap platform smoke; the rest of the sweep is
+        # expensive and belongs on the hosted gate.
+        pytest.param(0, ROW_GROUP, id="no-rows", marks=pytest.mark.windows_parity),
+        pytest.param(1, ROW_GROUP, id="single-row", marks=pytest.mark.windows_parity),
         pytest.param(ROW_GROUP - 1, ROW_GROUP, id="one-row-group-short"),
         pytest.param(ROW_GROUP, ROW_GROUP, id="exactly-one-row-group"),
         pytest.param(ROW_GROUP + 1, ROW_GROUP, id="one-row-group-plus-one"),
@@ -139,6 +148,7 @@ def test_streaming_write_is_byte_identical(tmp_path: Path, rows: int, batch_size
     _compare(tmp_path / "streamed.parquet", table)
 
 
+@pytest.mark.windows_parity
 def test_streaming_content_digest_matches_the_single_shot_digest(tmp_path: Path) -> None:
     """The digest inside the file is computed from the rows, so it cannot drift."""
     table = _ordered_table(ROW_GROUP + 7)
@@ -150,6 +160,7 @@ def test_streaming_content_digest_matches_the_single_shot_digest(tmp_path: Path)
     assert reference.content_sha256 == content_digest(table, table_name=TABLE_NAME)
 
 
+@pytest.mark.windows_parity
 def test_empty_table_still_carries_its_self_description(tmp_path: Path) -> None:
     """A uniform table set means "no rows" must not be indistinguishable from "lost"."""
     path = tmp_path / "streamed.parquet"
@@ -226,6 +237,7 @@ def _abandon(writer: StreamingTableWriter) -> None:
         handle.close()
 
 
+@pytest.mark.windows_parity
 def test_empty_batches_are_refused(tmp_path: Path) -> None:
     """An empty batch is a caller bug: it would look like a truncated feed."""
     table = _ordered_table(4)
@@ -237,6 +249,7 @@ def test_empty_batches_are_refused(tmp_path: Path) -> None:
         _abandon(writer)
 
 
+@pytest.mark.windows_parity
 def test_batch_with_a_foreign_schema_is_refused(tmp_path: Path) -> None:
     """A batch from another table would silently corrupt this artifact."""
     canonical = _ordered_table(1)
@@ -249,6 +262,7 @@ def test_batch_with_a_foreign_schema_is_refused(tmp_path: Path) -> None:
         _abandon(writer)
 
 
+@pytest.mark.windows_parity
 def test_write_before_open_is_refused(tmp_path: Path) -> None:
     table = _ordered_table(4)
     writer = StreamingTableWriter(TABLE_NAME, tmp_path / "streamed.parquet")
@@ -256,12 +270,14 @@ def test_write_before_open_is_refused(tmp_path: Path) -> None:
         writer.write_batch(table)
 
 
+@pytest.mark.windows_parity
 def test_close_before_open_is_refused(tmp_path: Path) -> None:
     writer = StreamingTableWriter(TABLE_NAME, tmp_path / "streamed.parquet")
     with pytest.raises(StreamingWriteError, match="before open"):
         writer.close()
 
 
+@pytest.mark.windows_parity
 def test_opening_twice_is_refused(tmp_path: Path) -> None:
     """A second open would discard a primed digest and reopen it over nothing."""
     table = _ordered_table(4)
@@ -276,6 +292,7 @@ def test_opening_twice_is_refused(tmp_path: Path) -> None:
         writer.close()
 
 
+@pytest.mark.windows_parity
 def test_uncounted_batches_are_refused(tmp_path: Path) -> None:
     """A batch the counting pass never saw would desynchronise digest from file."""
     table = _ordered_table(8)
@@ -290,6 +307,7 @@ def test_uncounted_batches_are_refused(tmp_path: Path) -> None:
         _abandon(writer)
 
 
+@pytest.mark.windows_parity
 def test_short_writes_are_refused_at_close(tmp_path: Path) -> None:
     """A digest that describes rows the file does not contain is worse than no digest."""
     table = _ordered_table(8)
@@ -304,6 +322,7 @@ def test_short_writes_are_refused_at_close(tmp_path: Path) -> None:
         _abandon(writer)
 
 
+@pytest.mark.windows_parity
 def test_metadata_schema_declares_the_digest_it_is_given(tmp_path: Path) -> None:
     """The schema helper is what makes a streaming artifact self-describing."""
     digest = "a" * 64

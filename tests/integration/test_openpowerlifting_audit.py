@@ -44,6 +44,8 @@ from psd.serialization.dataset import artifact_paths, read_manifest
 from psd.serialization.parquet import read_parquet, write_parquet
 from tests.fixtures.openpowerlifting import SAMPLE_ROW_COUNT, write_sample_snapshot
 
+pytestmark = pytest.mark.windows_parity
+
 STAMP = datetime(2026, 10, 2, 0, 0, tzinfo=UTC)
 CONFIG = BuildConfig(chunk_rows=3, batch_rows=4, partitions=2)
 

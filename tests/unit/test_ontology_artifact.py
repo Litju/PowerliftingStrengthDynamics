@@ -39,6 +39,8 @@ from psd.serialization.parquet import read_parquet
 from psd.serialization.table import records_to_table, table_to_records, table_to_rows
 from psd.validation import validate_tables
 
+pytestmark = pytest.mark.windows_parity
+
 ONTOLOGY = default_ontology()
 
 EXERCISE_TABLES: tuple[str, ...] = (

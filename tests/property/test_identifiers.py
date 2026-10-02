@@ -15,6 +15,8 @@ from psd.schema.identifiers import (
     make_id,
 )
 
+pytestmark = pytest.mark.windows_parity
+
 
 def test_identifier_shape() -> None:
     value = make_id(IdPrefix.ATHLETE, "source-athlete-42")

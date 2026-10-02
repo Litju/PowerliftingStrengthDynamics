@@ -49,6 +49,8 @@ from psd.schema.version import SCHEMA_VERSION
 from psd.serialization.dataset import read_dataset, verify_dataset
 from tests.fixtures.openpowerlifting import SAMPLE_ROW_COUNT, write_sample_snapshot
 
+pytestmark = pytest.mark.windows_parity
+
 #: A fixed instant, so the only non-deterministic input to a build is excluded.
 STAMP = datetime(2026, 10, 2, 0, 0, tzinfo=UTC)
 

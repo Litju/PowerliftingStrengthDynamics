@@ -18,6 +18,8 @@ from psd.paths import (
     resolve_within_data_root,
 )
 
+pytestmark = pytest.mark.windows_parity
+
 
 def test_resolves_explicit_path_without_environment(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch

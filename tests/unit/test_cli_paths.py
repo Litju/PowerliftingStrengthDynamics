@@ -12,6 +12,8 @@ from psd.cli.main import app as root_app
 from psd.cli.paths_cmd import app
 from psd.paths import DATA_ROOT_ENV_VAR, ensure_data_root
 
+pytestmark = pytest.mark.windows_parity
+
 runner = CliRunner()
 
 

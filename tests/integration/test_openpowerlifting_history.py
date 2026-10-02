@@ -48,6 +48,8 @@ from psd.serialization.derived import (
 )
 from tests.fixtures.openpowerlifting import write_sample_snapshot
 
+pytestmark = pytest.mark.windows_parity
+
 STAMP = datetime(2026, 10, 2, 0, 0, tzinfo=UTC)
 CONFIG = BuildConfig(chunk_rows=3, batch_rows=4, partitions=2)
 

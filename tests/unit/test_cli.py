@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import pytest
 from typer.testing import CliRunner
 
 from psd import __version__
 from psd.cli.main import app
+
+pytestmark = pytest.mark.windows_parity
 
 runner = CliRunner()
 

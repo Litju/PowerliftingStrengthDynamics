@@ -134,6 +134,28 @@ uv run pytest
 uv build
 ```
 
+CI runs those gates with two paths and different jobs, because they answer different
+questions:
+
+| path | runner | owns |
+| --- | --- | --- |
+| `hosted-linux-quality` | GitHub-hosted Ubuntu | the broad regression gate: lint, format, strict types, the whole suite with coverage, the build |
+| `hosted-linux-wheel-smoke` | GitHub-hosted Ubuntu | packaging on its own, so a wheel failure reads as a packaging failure |
+| `self-hosted-windows-parity` | self-hosted Windows workstation | **Windows portability only**: the `windows_parity` subset, a tiny PSD-COMP fixture build/verify, a wheel and CLI smoke |
+
+The self-hosted job acquires nothing, builds no real corpus, and runs no coverage, lint,
+type check, service container or network test. Ubuntu already proves general correctness;
+Windows proves Windows portability. The subset is one documented command:
+
+```powershell
+uv run pytest -m windows_parity
+```
+
+Full Windows qualification — the whole suite on Windows — remains available as a
+`workflow_dispatch`-only workflow for Alpha and release cuts. See
+[CONTRIBUTING.md](CONTRIBUTING.md) for what earns the marker and the review rule for adding
+to it.
+
 ### Data root boundary
 
 PSD never stores datasets in the Git repository. External data is resolved through a
@@ -229,6 +251,29 @@ one name under two sex categories is one athlete with a recorded conflict, not t
 and not one silently chosen sex. A meet is identified by its start date, federation, and
 name, so 8,819 place-names that appear across more than one meet identity stay split rather
 than merged.
+
+### What the audit can and cannot tell you
+
+The audit answers four questions in four separate sections, and every count carries a
+**finding class** so the four are never read as one warning bucket:
+
+| family | class | what it is |
+| --- | --- | --- |
+| Identity and name stability | source limitation | `Name` *is* the source identity key, so a historical name change is **not identifiable** from this source and the report says so in machine-readable form. What is observable is measured instead: names under two reported sex categories, `#N` disambiguated keys, base-name collision groups and their size distribution. |
+| Suspicious chronology | source anomaly | participations dated after the pinned snapshot, meet identities spanning more than one source date, and identities whose age observations admit no common birth year under the source's own age semantics. |
+| Unit consistency | transform defect | raw-to-canonical mass fidelity: is the canonical value the source value, with the sign carrying only the attempt result? Every mismatch counter is expected to be zero. |
+| Equipment and federation transitions | descriptive | changes between meets, computed per athlete-meet so two event entries at one meet are never read as a switch. |
+
+Two of these deserve their refusals stated. A historical name change is **not** inferred,
+because there is no independent stable identifier to infer it from, and country, state,
+federation, body mass, age class and division changes are *not* read as identity changes
+because they legitimately vary over a career. And the unit section applies **no**
+physiological-plausibility range and infers no pounds: the source documents kilograms and
+carries no per-row unit field, so the honest question is whether the canonical value is the
+source value, not whether a lifter looks plausible.
+
+Chronology and transition findings are diagnostics. No age is rewritten, no identity is
+split or merged, and no transition is acted on.
 
 ### Reproducibility and memory
 

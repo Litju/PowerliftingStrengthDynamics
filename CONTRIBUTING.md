@@ -54,13 +54,59 @@ uv run pytest
 uv build
 ```
 
-CI enforces the same gates on `windows-latest` and `ubuntu-latest` (Python 3.12),
-including a clean wheel install/smoke test. Type checking is **Pyright strict**; narrow,
-justified per-scope exceptions are preferable to weakening project-wide strictness.
+CI enforces the same gates, split across two paths with different jobs.
+
+| path | runner | what it owns |
+| --- | --- | --- |
+| `hosted-linux-quality` | GitHub-hosted Ubuntu | the broad regression gate: lint, format, strict types, the **whole** suite with coverage, the build, a clean wheel smoke |
+| `hosted-linux-wheel-smoke` | GitHub-hosted Ubuntu | the packaging gate on its own, so a wheel failure is visibly a packaging failure |
+| `self-hosted-windows-parity` | self-hosted Windows workstation | **Windows portability only**: the `windows_parity` test subset, a tiny PSD-COMP fixture build/verify, a wheel and CLI smoke |
+| Full Windows qualification | self-hosted Windows workstation | the whole suite on Windows; `workflow_dispatch` only, for Alpha and release cuts |
+
+The self-hosted job is deliberately small. It acquires nothing, builds no real corpus,
+runs no coverage, no lint, no type check, no service containers, and no network-dependent
+test, and it is configured for `cancel-in-progress` so a new push supersedes the previous
+run rather than queueing behind it. Do not add work to it for symmetry: Ubuntu already
+proves general correctness, and Windows proves Windows portability.
+
+Type checking is **Pyright strict**; narrow, justified per-scope exceptions are preferable
+to weakening project-wide strictness.
 
 Test classes follow the locked stack: unit, property (Hypothesis), integration,
 golden/reproducibility, benchmark-contract/leakage, and slow smoke. Expensive model
 training is not a pull-request gate.
+
+### The Windows parity subset
+
+The self-hosted job runs exactly one selection:
+
+```powershell
+uv run pytest -m windows_parity
+```
+
+`windows_parity` is a real pytest marker declared in `pyproject.toml`, and it is the whole
+selection mechanism — no file lists in workflow YAML, which rot silently. A test carries it
+by declaring `pytestmark = pytest.mark.windows_parity` at module level, or
+`@pytest.mark.windows_parity` on a single test or `pytest.param`.
+
+**The review rule: when you fix a Windows-specific or cross-platform failure, mark the test
+that proves the fix in the same commit, and run `uv run pytest -m windows_parity` locally
+to confirm it is in the subset.** A regression test that only runs on Linux is not evidence
+that Windows still works.
+
+Mark a test when it materially exercises one of: Windows drive, UNC, absolute and relative
+path semantics; the `PSD_DATA_ROOT` boundary; `pathlib` and data-root containment; pytest
+temporary-directory assumptions; timezone-database and `tzdata` availability; canonical
+timestamp encoding including pre-1970, negative epoch, UTC normalization and equivalent
+aware instants; Arrow/Parquet read-write; canonical content hashing and
+streaming-versus-single-shot digest equivalence; deterministic ordering and identifiers
+where platform semantics could matter; CLI import, help, version and schema surface; and
+the tiny deterministic PSD-COMP build/verify path.
+
+`tests/contract/test_platform_contract_selection.py` enforces the rest: every declared
+platform area must still have a marked test, the selection must stay under its size ceiling,
+nothing network-dependent or full-corpus may be marked, and the self-hosted job in
+`ci.yml` must not have grown a lint, type-check, coverage or service step.
 
 ## Change expectations
 

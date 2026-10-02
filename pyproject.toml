@@ -156,6 +156,15 @@ addopts = [
   "--showlocals",
 ]
 filterwarnings = ["error"]
+# The self-hosted Windows runner runs `-m windows_parity` and nothing else, so this marker
+# is the whole selection mechanism and its definition is part of the contract: with
+# `--strict-markers` on, a test carrying it is claiming "a Windows or cross-platform
+# regression would be caught by this", and
+# `tests/contract/test_platform_contract_selection.py` checks that each declared
+# platform-contract area still has at least one test carrying it.
+markers = [
+  "windows_parity: exercises a Windows or cross-platform contract; selected by the self-hosted Windows parity gate",
+]
 
 [tool.coverage.run]
 branch = true

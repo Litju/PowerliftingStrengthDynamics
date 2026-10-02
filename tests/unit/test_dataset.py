@@ -38,6 +38,8 @@ from psd.serialization.dataset import (
 )
 from psd.validation import validate_tables
 
+pytestmark = pytest.mark.windows_parity
+
 CREATED_AT = datetime(2026, 6, 1, 12, 0, tzinfo=UTC)
 SOURCE_ID = "src_22222222222222222222222222222222"
 ATHLETE_ID = "ath_11111111111111111111111111111111"

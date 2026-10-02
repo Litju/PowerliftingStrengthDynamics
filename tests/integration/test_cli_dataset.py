@@ -21,6 +21,8 @@ from psd.cli.paths_cmd import app as paths_app
 from psd.paths import DATA_ROOT_ENV_VAR, resolve_within_data_root
 from psd.schema.registry import table_names
 
+pytestmark = pytest.mark.windows_parity
+
 runner = CliRunner()
 
 SOURCE_ID = "src_22222222222222222222222222222222"

@@ -41,6 +41,8 @@ from psd.serialization.dataset import CanonicalDataset
 from psd.serialization.ordering import canonical_order
 from psd.serialization.table import records_to_table
 
+pytestmark = pytest.mark.windows_parity
+
 ONTOLOGY = default_ontology()
 
 EXERCISE_TABLES: tuple[str, ...] = (

@@ -1,0 +1,84 @@
+name: Full Windows qualification
+
+# The full regression gate on Windows, run deliberately rather than on every push.
+#
+# `ci.yml` proves Windows *portability* through a small marked subset and a wheel smoke.
+# That is the right routine cost, and it is not the same claim: it does not prove the whole
+# suite passes on Windows, because the hosted Linux job already proves the suite. What it
+# cannot prove is Windows-specific behaviour in code the parity subset does not reach.
+#
+# This workflow closes that gap for Alpha and release qualification, and only then. It is
+# `workflow_dispatch` with no push or pull_request trigger on purpose: running it per push is
+# exactly the duplicated workstation load the CI split exists to remove.
+#
+# It is heavier than a parity job and says so. Expect minutes rather than seconds, and run
+# it when a release is being cut rather than to answer a routine question.
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Branch, tag, or SHA to qualify
+        required: false
+        default: main
+        type: string
+
+permissions:
+  contents: read
+
+# One at a time. A qualification run is a workstation, not a fleet.
+concurrency:
+  group: windows-full-qualification-${{ inputs.ref }}
+  cancel-in-progress: false
+
+env:
+  UV_FROZEN: "1"
+  UV_NO_PROGRESS: "1"
+  UV_VERSION: "0.12.4"
+
+jobs:
+  windows-full-qualification:
+    name: full Windows qualification / ${{ inputs.ref }}
+    runs-on: [self-hosted, Windows, X64]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+
+      # Same omission of Node, Docker and service containers as the parity job. The point
+      # of this workflow is to prove the ordinary suite on Windows, and the ordinary suite
+      # needs none of them.
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+
+      - name: Install locked dependencies
+        run: uv sync --all-groups
+
+      - name: Lint (ruff check)
+        run: uv run ruff check .
+
+      - name: Format check (ruff format --check)
+        run: uv run ruff format --check .
+
+      - name: Static types (pyright strict)
+        run: uv run pyright
+
+      # Serial, and without coverage: the hosted Linux job owns coverage, and this run's
+      # question is "does Windows pass the same suite", not "what is the coverage".
+      - name: Full pytest suite
+        run: uv run pytest -q
+
+      - name: Tiny PSD-COMP fixture build and verify
+        run: uv run python scripts/tiny_psd_comp.py --data-root "${{ runner.temp }}/psd-full"
+
+      - name: Build distributions
+        run: uv build
+
+      - name: Clean wheel and CLI smoke
+        run: uv run python scripts/wheel_smoke.py
+
+      - name: Remove qualification scratch
+        if: always()
+        run: Remove-Item -Recurse -Force -ErrorAction SilentlyContinue "${{ runner.temp }}/psd-full"

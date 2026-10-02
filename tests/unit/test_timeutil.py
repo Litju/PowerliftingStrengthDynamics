@@ -14,6 +14,8 @@ from psd.timeutil import (
     require_aware,
 )
 
+pytestmark = pytest.mark.windows_parity
+
 
 def test_require_aware_rejects_naive_timestamps() -> None:
     with pytest.raises(TimestampAmbiguityError, match="naive timestamp"):

@@ -37,6 +37,8 @@ from psd.serialization.canonical import (
 )
 from psd.timeutil import TimestampAmbiguityError
 
+pytestmark = pytest.mark.windows_parity
+
 # The two routes through the timestamp encoder are private because production code reaches
 # only the column-wise one. Qualifying that the *private* route agrees with the public one
 # is the entire point of these tests: the optimization is justified by that equivalence, so

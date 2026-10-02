@@ -46,6 +46,8 @@ from psd.serialization.canonical import (
 from psd.serialization.ordering import canonical_order_polars
 from psd.units import LB_TO_KG
 
+pytestmark = pytest.mark.windows_parity
+
 INGESTED_AT = datetime(2026, 1, 5, 9, 30, tzinfo=UTC)
 SOURCE_ID = "hevy_export_2024"
 
