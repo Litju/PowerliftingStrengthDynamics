@@ -49,7 +49,7 @@ from __future__ import annotations
 import hashlib
 import math
 from collections.abc import Sequence
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any, Final, cast
 
 import pyarrow as pa
@@ -61,6 +61,8 @@ __all__ = (
     "CanonicalEncodingError",
     "canonical_bytes",
     "content_digest",
+    "content_header",
+    "encode_rows",
 )
 
 CONTENT_ENCODING: Final[str] = "psd-canonical-content/1"
@@ -78,8 +80,8 @@ def canonical_bytes(table: pa.Table, *, table_name: str) -> bytes:
     """Return the canonical byte encoding of *table*.
 
     Args:
-        table: Table to encode. Callers must sort it first; this function
-            encodes rows in the order given.
+        table: Table to encode. Callers must sort it first; this function encodes rows
+            in the order given.
         table_name: Logical table name, included in the header so two different
             tables with identical rows never share a digest.
 
@@ -90,20 +92,111 @@ def canonical_bytes(table: pa.Table, *, table_name: str) -> bytes:
         CanonicalEncodingError: A value has no canonical encoding, for example a
             non-finite float or an unsupported Arrow type.
     """
-    header = (
-        f"{CONTENT_ENCODING}\n"
-        f"table:{table_name}\n"
-        f"columns:{','.join(table.schema.names)}\n"
-        f"rows:{table.num_rows}\n"
+    header = content_header(table.schema.names, table_name=table_name, row_count=table.num_rows)
+    return b"".join([header, *encode_rows(table)])
+
+
+def content_header(columns: Sequence[str], *, table_name: str, row_count: int) -> bytes:
+    """Return the canonical encoding's header for a described table.
+
+    Separated from :func:`canonical_bytes` so a streaming writer can open the same
+    digest over the same header and then feed rows as they are produced, rather than
+    materializing the whole table just to hash it. The header declares the row count
+    up front, which is why a streaming writer may only open its digest once it knows
+    the final count: the declared count must be the count actually written.
+    """
+    return (
+        f"{CONTENT_ENCODING}\ntable:{table_name}\ncolumns:{','.join(columns)}\nrows:{row_count}\n"
     ).encode()
 
-    column_values: list[list[Any]] = [column.to_pylist() for column in table.columns]
-    rows: list[bytes] = [
-        _encode_value(column_values[column_index][row_index])
+
+def encode_rows(table: pa.Table) -> list[bytes]:
+    """Return the canonical encoding of each row of *table*, in row order.
+
+    Column values are converted a column at a time through Arrow's own converter,
+    which is C-speed. A streaming writer calls this per batch so that the Python
+    objects exist only for the batch in hand.
+
+    Timestamps take a separate route for a measured reason. Asking Arrow to turn a
+    ``timestamp("us", tz="UTC")`` column into Python ``datetime`` objects is not C-speed:
+    it resolves the zone through ``zoneinfo`` and ``pytz`` on every call, and a zone
+    library that is absent is not remembered as absent, so each call re-searches the
+    import path. Measured on this project that path costs about 179x more than the same
+    conversion of a naive column, and it is paid once per timestamp column per table --
+    which, on a corpus, is paid millions of times. The canonical schema pins every
+    timestamp to microsecond UTC, so the epoch-microsecond value already *is* the instant
+    and the formatted string follows from arithmetic. :func:`_encode_epoch_micros` produces
+    exactly the bytes :func:`_encode_timestamp` does, which a test asserts.
+    """
+    column_values: list[list[Any]] = [_column_values(column) for column in table.columns]
+    width = len(column_values)
+    return [
+        b"".join(
+            _encode_prepared(column_values[column_index][row_index])
+            for column_index in range(width)
+        )
         for row_index in range(table.num_rows)
-        for column_index in range(len(column_values))
     ]
-    return b"".join([header, *rows])
+
+
+#: The single timestamp type the canonical schema uses. Anything else is refused rather
+#: than encoded on the assumption that it is equivalent.
+_CANONICAL_TIMESTAMP: Final[pa.DataType] = pa.timestamp("us", tz="UTC")
+
+_EPOCH: Final[datetime] = datetime(1970, 1, 1, tzinfo=UTC)
+
+
+def _column_values(column: Any) -> list[Any]:
+    """Return each value of *column*, pre-encoded where the type allows it.
+
+    *column* is a PyArrow ``ChunkedArray``. The parameter is left untyped for the reason
+    given at the top of :mod:`psd.serialization.parquet`: PyArrow ships no inline types, so
+    a precise annotation would be a guess dressed as a fact.
+
+    Returns:
+        One entry per row. A timestamp column yields bytes directly, since its encoding is
+        a pure function of an integer. Everything else yields the Python value, to be
+        encoded per value by :func:`_encode_value`.
+
+    Raises:
+        CanonicalEncodingError: The column is a timestamp the canonical schema does not
+            define, so its encoding is not knowable.
+    """
+    dtype: pa.DataType = column.type
+    if not pa.types.is_timestamp(dtype):
+        return column.to_pylist()
+    if dtype != _CANONICAL_TIMESTAMP:
+        msg = (
+            f"Timestamp column of type {dtype!s} cannot be canonically encoded; the "
+            "canonical schema pins every timestamp to microsecond UTC."
+        )
+        raise CanonicalEncodingError(msg)
+    micros: list[int | None] = column.cast(pa.int64()).to_pylist()
+    return [_NULL if value is None else _encode_epoch_micros(value) for value in micros]
+
+
+def _encode_prepared(value: Any) -> bytes:
+    """Return the encoding of one prepared column value.
+
+    Bytes are already encoded; anything else is a Python value that still needs encoding.
+    """
+    if isinstance(value, bytes):
+        return value
+    return _encode_value(value)
+
+
+def _encode_epoch_micros(micros: int) -> bytes:
+    """Return the canonical encoding of an instant given as epoch microseconds UTC.
+
+    Equivalent to :func:`_encode_timestamp` for an aware UTC datetime, including the fixed
+    microsecond precision the encoding depends on.
+    """
+    moment = _EPOCH + timedelta(microseconds=micros)
+    return (
+        b"T"
+        + moment.isoformat(timespec="microseconds").replace("+00:00", "Z").encode("ascii")
+        + _TERMINATOR
+    )
 
 
 def content_digest(table: pa.Table, *, table_name: str) -> str:
