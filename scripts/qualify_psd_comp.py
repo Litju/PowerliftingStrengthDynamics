@@ -267,7 +267,7 @@ def directory_bytes(path: Path) -> tuple[int, int]:
     return total, count
 
 
-def _artifact_digests(manifest: dict[str, Any]) -> dict[str, str]:
+def artifact_content_digests(manifest: dict[str, Any]) -> dict[str, str]:
     """Return the content digest of every artifact in a persisted manifest."""
     return {artifact["name"]: artifact["content_sha256"] for artifact in manifest["artifacts"]}
 
@@ -277,13 +277,23 @@ def _artifact_digests(manifest: dict[str, Any]) -> dict[str, str]:
 #: in the content digest: a wall-clock stamp, not a fact about the corpus.
 _RUN_LOCAL_MANIFEST_FIELDS: frozenset[str] = frozenset({"created_at", "ingested_at", "environment"})
 
+#: Per-artifact fields that describe the *physical file* rather than the corpus. A Parquet
+#: writer stamps each file with metadata that is not a fact about its rows -- the writer
+#: version, the created-by string, row-group boundaries -- so two builds of identical rows
+#: produce different bytes and different byte counts. The locked design accepts this: the
+#: logical ``content_sha256`` is the artifact's identity and the byte digest is what
+#: verification measures. Comparing manifests without dropping these therefore reports a
+#: difference the design has already permitted, which reads as a reproducibility failure
+#: and is not one.
+_PHYSICAL_ARTIFACT_FIELDS: frozenset[str] = frozenset({"sha256", "byte_size"})
+
 
 def _strip_run_local(value: object) -> object:
-    """Return *value* with every run-local manifest field removed, recursively."""
+    """Return *value* with run-local and physical-file fields removed, recursively."""
     if isinstance(value, dict):
         stripped: dict[str, object] = {}
         for key, item in cast("dict[str, object]", value).items():
-            if key not in _RUN_LOCAL_MANIFEST_FIELDS:
+            if key not in _RUN_LOCAL_MANIFEST_FIELDS and key not in _PHYSICAL_ARTIFACT_FIELDS:
                 stripped[key] = _strip_run_local(item)
         return stripped
     if isinstance(value, list):
@@ -291,13 +301,15 @@ def _strip_run_local(value: object) -> object:
     return value
 
 
-def _manifest_digest_ignoring(manifest: dict[str, Any]) -> str:
-    """Return a digest of a manifest describing the corpus rather than the run.
+def corpus_manifest_digest(manifest: dict[str, Any]) -> str:
+    """Return a digest of a manifest describing the corpus rather than the files.
 
     Two runs of one snapshot legitimately differ in ``created_at``, in the environment
     snapshot, and in every ``ingested_at`` stamp inside the source and lineage records.
-    Everything else in the manifest describes the corpus -- its identity, its artifacts and
-    their digests, its schema version -- and must be identical.
+    They also differ in every artifact's ``sha256`` and ``byte_size``, because a Parquet
+    file is not a pure function of its rows. What remains -- the corpus identity, every
+    artifact's name, path, row count and ``content_sha256``, and the schema version -- is
+    what must be identical, and is what this compares.
     """
     return hashlib.sha256(
         json.dumps(_strip_run_local(manifest), sort_keys=True, default=str).encode("utf-8")
@@ -622,7 +634,7 @@ def main() -> int:
             "staging_files": staging_files,
         },
         "digests": {
-            "build_1": _artifact_digests(first_manifest),
+            "build_1": artifact_content_digests(first_manifest),
             "athlete_history": {
                 "sha256": history.manifest.artifact_sha256,
                 "content_sha256": history.manifest.artifact_content_sha256,
@@ -716,15 +728,19 @@ def main() -> int:
     if second is not None and second_manifest is not None:
         report["determinism"] = {
             "second_build_run": True,
-            "identical_content_digests": _artifact_digests(first_manifest)
-            == _artifact_digests(second_manifest),
+            "identical_content_digests": artifact_content_digests(first_manifest)
+            == artifact_content_digests(second_manifest),
             "identical_byte_digests": [a["sha256"] for a in first_manifest["artifacts"]]
             == [a["sha256"] for a in second_manifest["artifacts"]],
             "identical_row_counts": first.row_counts == second.row_counts,
             "identical_counters": first.counters.to_dict() == second.counters.to_dict(),
-            "identical_manifest_excluding_run_metadata": _manifest_digest_ignoring(first_manifest)
-            == _manifest_digest_ignoring(second_manifest),
-            "second_build_content_digests": _artifact_digests(second_manifest),
+            "identical_manifest_ignoring_run_and_physical": corpus_manifest_digest(first_manifest)
+            == corpus_manifest_digest(second_manifest),
+            "note": (
+                "Byte digests and byte sizes are expected to differ between two builds: a "
+                "Parquet file is not a pure function of its rows. Identity is content_sha256."
+            ),
+            "second_build_content_digests": artifact_content_digests(second_manifest),
         }
     else:
         report["determinism"] = {
