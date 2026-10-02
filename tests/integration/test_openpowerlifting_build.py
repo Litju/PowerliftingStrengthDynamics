@@ -18,10 +18,12 @@ The properties under test are the ones a consumer depends on:
 
 from __future__ import annotations
 
+import shutil
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+import polars as pl
 import pytest
 
 from psd.ingest.openpowerlifting.acquire import (
@@ -32,9 +34,15 @@ from psd.ingest.openpowerlifting.contract import SourceSchemaError, expected_col
 from psd.ingest.openpowerlifting.snapshot import OpenPowerliftingSnapshot
 from psd.ingest.openpowerlifting.transform import (
     BuildConfig,
+    BuildCounters,
     BuildRequest,
     BuildResult,
+    TransformError,
     build_corpus,
+    partition_label,
+    partition_label_expression,
+    stage_snapshot,
+    staged_partitions,
 )
 from psd.schema.registry import table_names
 from psd.schema.version import SCHEMA_VERSION
@@ -119,6 +127,27 @@ def _one(rows: Rows, table: str, **match: object) -> dict[str, object]:
     ]
     assert len(found) == 1, f"expected one {table} row for {match}, found {len(found)}"
     return found[0]
+
+
+def _stage_snapshot(pinned: tuple[Path, OpenPowerliftingSnapshot], *, partitions: int) -> Path:
+    """Stage *pinned*'s CSV into a scratch directory and return that directory.
+
+    Staging is exercised directly rather than through a build because a build writes its
+    corpus and keeps its own staging directory, and what these tests assert is a property
+    of the staged layout itself: how many partition files exist, and in what order walking
+    them produces.
+    """
+    root, snapshot = pinned
+    staging = root / f"staging-{partitions}"
+    shutil.rmtree(staging, ignore_errors=True)
+    stage_snapshot(
+        resolve_snapshot_csv(snapshot, data_root=root / "data"),
+        staging,
+        source_id=f"openpowerlifting_{snapshot.archive_sha256[:16]}",
+        config=BuildConfig(partitions=partitions),
+        counters=BuildCounters(),
+    )
+    return staging
 
 
 def _by_name(rows: Rows, name: str) -> Rows:
@@ -247,6 +276,120 @@ def test_build_is_independent_of_partition_and_batch_size(
 # ---------------------------------------------------------------------------
 # Irregularities are counted, never repaired
 # ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# Staging spreads across the partitions it was asked for
+# ---------------------------------------------------------------------------
+
+
+def test_staging_spreads_rows_across_partitions(
+    pinned: tuple[Path, OpenPowerliftingSnapshot],
+) -> None:
+    """Staging must actually spread rows, and each row must land in its own partition.
+
+    It did not, for the whole history of this module. The partition label was read as the
+    identifier's first character, and every identifier begins with its tag -- ``a`` for
+    ``ath_`` -- so all 4,036,909 rows of the pinned snapshot went into one partition called
+    ``a``. The sixteen-way memory bound the configuration asks for was a no-op, and the
+    build handed the whole corpus to a single pass.
+
+    A ten-row fixture hid it completely: with one partition the answer is right by
+    accident, and every determinism and content test in this file still passed. The
+    property that has to be asserted is therefore not "the rows round-trip" but "the rows
+    are spread, and each row is in the partition its own identity names".
+    """
+    staging = _stage_snapshot(pinned, partitions=16)
+    partitions = list(staged_partitions(staging))
+
+    assert len(partitions) > 1, "every row landed in one partition, so the bound is a no-op"
+    staged = 0
+    for label, path in partitions:
+        identities = _identities_in(path)
+        staged += len(identities)
+        wrong = [i for i in identities if partition_label(i, 16) != label]
+        assert not wrong, f"partition {label} holds rows that belong elsewhere: {wrong[:3]}"
+
+    assert staged == SAMPLE_ROW_COUNT
+
+
+def test_the_partition_walk_is_the_global_canonical_order(
+    pinned: tuple[Path, OpenPowerliftingSnapshot],
+) -> None:
+    """Consecutive partitions must be disjoint and ascending, which is what makes the walk
+    the canonical order.
+
+    Rows *within* a partition are in source order, not sorted; each partition's canonical
+    table is sorted on its own by the registry's ordering. What the walk must guarantee is
+    that the per-partition ranges do not overlap and do not go backwards -- otherwise a
+    table built partition by partition would be in an order its own digest contradicts.
+    """
+    staging = _stage_snapshot(pinned, partitions=16)
+    previous_high: str | None = None
+    for _label, path in staged_partitions(staging):
+        identities = _identities_in(path)
+        assert identities
+        assert previous_high is None or previous_high < min(identities), (
+            f"partition ranges overlap: {previous_high!r} then {min(identities)!r}"
+        )
+        previous_high = max(identities)
+
+
+def _identities_in(path: Path) -> list[str]:
+    """Return the athlete identities staged in one partition file."""
+    return (
+        pl.read_parquet(path, columns=["__psd_athlete_id"]).get_column("__psd_athlete_id").to_list()
+    )
+
+
+@pytest.mark.parametrize("partitions", [1, 2, 4, 8, 16])
+def test_the_vectorized_label_agrees_with_the_single_identifier_rule(partitions: int) -> None:
+    """The two ways of naming a partition must not be able to disagree.
+
+    They did, and silently: the vectorized expression read the prefix letter while the
+    helper read the digest. Both are declared once now, and this asserts they agree over
+    identities that exercise every leading digest character -- the case the expression got
+    wrong.
+    """
+    identities = [
+        f"ath_{character}{index:031x}" for character in "0123456789abcdef" for index in range(3)
+    ]
+    frame = pl.DataFrame({"__psd_athlete_id": identities})
+    expression = frame.select(partition_label_expression(partitions).alias("label"))
+
+    assert expression.get_column("label").to_list() == [
+        partition_label(identifier, partitions) for identifier in identities
+    ]
+
+
+def test_sixteen_identities_can_occupy_sixteen_partitions() -> None:
+    """Every leading digest character reaches its own partition, and none collides.
+
+    The fixture has thirteen rows and therefore cannot fill sixteen buckets, so this uses
+    identities that do. It is the direct statement of what the twelve-row accident above
+    could not say.
+    """
+    identities = [
+        f"ath_{character}{index:031x}" for index, character in enumerate("0123456789abcdef")
+    ]
+    frame = pl.DataFrame({"__psd_athlete_id": identities})
+    labels = frame.select(partition_label_expression(16).alias("label")).get_column("label")
+
+    assert labels.to_list() == list("0123456789abcdef")
+    assert labels.n_unique() == 16
+
+
+def test_a_partition_count_that_breaks_identity_order_is_refused() -> None:
+    """Five does not divide sixteen, and a count that does not would interleave buckets."""
+    with pytest.raises(TransformError, match="partitions must divide the sixteen"):
+        partition_label("ath_" + "0" * 32, 5)
+    with pytest.raises(TransformError, match="partitions must divide the sixteen"):
+        BuildConfig(partitions=5)
+
+
+def test_a_non_identifier_cannot_name_a_partition() -> None:
+    with pytest.raises(TransformError, match="not a derived identifier"):
+        partition_label("not-an-identifier", 16)
 
 
 def test_every_source_row_is_read(

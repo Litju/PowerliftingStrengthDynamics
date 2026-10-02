@@ -119,6 +119,11 @@ __all__ = (
     "build_corpus",
     "normalize_meet_field",
     "partition_key",
+    "partition_label",
+    "partition_label_expression",
+    "require_partition_count",
+    "stage_snapshot",
+    "staged_partitions",
 )
 
 #: A digest begins with one of these, so the first character is a partition key that
@@ -142,6 +147,11 @@ PARTITION_COLUMN: Final[str] = "__psd_partition"
 NORMALIZED_PREFIX: Final[str] = "__psd_norm_"
 
 _UNIT_SEPARATOR: Final[str] = "\x1f"
+
+#: Local name for the row-position column a staging split materialises. Distinct from
+#: ``ROW_ORDINAL_COLUMN``, which is the *source* row ordinal and is part of the staged
+#: schema: reusing that name here would shadow the source ordinal it is meant to index.
+_SPLIT_INDEX_COLUMN: Final[str] = "__psd_split_index"
 
 #: PyArrow ships no inline types and the community stubs describe the Parquet writer's
 #: parameter unions more narrowly than the runtime accepts. The untyped entry points are
@@ -261,14 +271,7 @@ class BuildConfig:
                 f"got {self.partitions}."
             )
             raise ValueError(msg)
-        if alphabet % self.partitions != 0:
-            msg = (
-                "partitions must divide the sixteen a digest can start with; got "
-                f"{self.partitions}. Bucketing by scaling the leading hex digit is what "
-                "keeps the partition walk in identity order, and that only works for a "
-                "divisor of sixteen."
-            )
-            raise ValueError(msg)
+        require_partition_count(self.partitions)
 
 
 @dataclass(slots=True)
@@ -386,6 +389,47 @@ def partition_key(identifier: str) -> str:
     return digest[0]
 
 
+#: The first hex character of an identifier's digest, as a vectorized extraction.
+#:
+#: Anchored on the underscore separator so it cannot match a hex-looking character inside
+#: the prefix. Derived identifiers are ``<tag>_<32 hex>`` and no tag contains an
+#: underscore, so the first ``_<hex>`` in one is always the start of the digest.
+_DIGEST_FIRST_HEX: Final[str] = r"_([0-9a-f])"
+
+
+def require_partition_count(partitions: int) -> None:
+    """Refuse a partition count that cannot preserve identity order.
+
+    Buckets are produced by scaling the leading hex digit onto the requested count, which
+    keeps the partition walk in identity order only for a divisor of sixteen. Taken at
+    face value, a count of five would produce buckets that interleave, and the build would
+    silently write a canonically-ordered table in the wrong order.
+
+    Raises:
+        TransformError: The count is not a divisor of sixteen.
+    """
+    if 16 % partitions != 0:
+        msg = (
+            f"partitions must divide the sixteen a digest can start with; got {partitions}. "
+            "Bucketing by scaling the leading hex digit is what keeps the partition walk "
+            "in identity order, and that only works for a divisor of sixteen."
+        )
+        raise TransformError(msg)
+
+
+def _partition_buckets(partitions: int) -> dict[str, str]:
+    """Return the leading-hex-character to partition-label mapping.
+
+    Declared once and used by both the vectorized expression and the single-identifier
+    helper, so the two cannot disagree. They did once, and the disagreement was silent:
+    every staged row landed in one partition while the configuration asked for sixteen.
+    """
+    return {
+        character: _PARTITION_ALPHABET[int(character, 16) * partitions // 16]
+        for character in _PARTITION_ALPHABET
+    }
+
+
 def partition_label(identifier: str, partitions: int) -> str:
     """Return the partition a derived identifier belongs to.
 
@@ -405,15 +449,34 @@ def partition_label(identifier: str, partitions: int) -> str:
         TransformError: The partition count does not divide sixteen, or the identifier
             is not a derived identifier.
     """
-    if 16 % partitions != 0:
-        msg = (
-            f"partitions must divide the sixteen a digest can start with; got {partitions}. "
-            "Bucketing by scaling the leading hex digit is what keeps the partition walk "
-            "in identity order, and that only works for a divisor of sixteen."
-        )
-        raise TransformError(msg)
-    bucket = int(partition_key(identifier), 16) * partitions // 16
-    return f"{bucket:x}"
+    require_partition_count(partitions)
+    return _partition_buckets(partitions)[partition_key(identifier)]
+
+
+def partition_label_expression(partitions: int) -> pl.Expr:
+    """Return the vectorized partition label of each row's athlete identity.
+
+    Reads the identifier's **digest**, not its first character. An identifier is
+    ``<tag>_<32 hex>``, so taking ``str.slice(0, 1)`` reads the ``a`` of ``ath`` and every
+    row in the corpus lands in one partition -- which turns a sixteen-way memory bound
+    into a no-op and hands the whole corpus to a single pass. That is exactly what the
+    pinned 4,036,909-row snapshot did until this was fixed.
+
+    Args:
+        partitions: Partition count; must divide sixteen.
+
+    Returns:
+        An expression over ``athlete_id`` producing each row's partition label.
+
+    Raises:
+        TransformError: The partition count does not divide sixteen.
+    """
+    require_partition_count(partitions)
+    return (
+        pl.col(ATHLETE_ID_COLUMN)
+        .str.extract(_DIGEST_FIRST_HEX, 1)
+        .replace_strict(_partition_buckets(partitions), default=None, return_dtype=pl.String)
+    )
 
 
 # --------------------------------------------------------------------------
@@ -611,7 +674,7 @@ def _assign(
     return frame.with_columns(pl.Series(id_column, identifiers, dtype=pl.String))
 
 
-def _stage(
+def stage_snapshot(
     csv_path: Path,
     staging: Path,
     *,
@@ -626,6 +689,11 @@ def _stage(
     double every table -- silently, and only the second time the same snapshot is built.
     Staged rows are a derived artifact of one CSV; the build re-reads the CSV rather than
     reusing them, so there is nothing to lose by starting clean.
+
+    This is public because the staged layout is an observable property of the corpus, and
+    asserting it -- that rows really are spread across the partitions asked for, and that
+    walking them yields the canonical order -- is the only way to catch a staging pass that
+    quietly stops partitioning.
     """
     schema = _staged_schema()
     alphabet = _PARTITION_ALPHABET[: config.partitions]
@@ -757,19 +825,23 @@ def _write_partitions(
     alphabet: str,
     schema: pa.Schema,
 ) -> None:
-    """Append each partition of *frame* to its staged file."""
-    count = len(alphabet)
-    keyed = frame.with_columns(
-        pl.col(ATHLETE_ID_COLUMN)
-        .str.slice(0, 1)
-        .map_elements(_bucket(count), return_dtype=pl.String)
-        .alias(PARTITION_COLUMN)
-    )
-    for key, part in keyed.partition_by(PARTITION_COLUMN, as_dict=True).items():
+    """Append each partition of *frame* to its staged file.
+
+    The partition label is computed on a one-column frame and the split yields *row
+    positions*, so the staged frame is never copied in order to hold one more column. That
+    matters: adding the label inline copies every column of the chunk -- the raw source
+    columns and the length-prefixed identity keys included -- and the difference between
+    that and a position list is several times the chunk the pass was told to bound.
+    """
+    positions = frame.select(
+        partition_label_expression(len(alphabet)).alias(PARTITION_COLUMN),
+    ).with_row_index(_SPLIT_INDEX_COLUMN)
+    for key, group in positions.partition_by(PARTITION_COLUMN, as_dict=True).items():
         label = str(key[0])
         if label not in alphabet:
             continue
-        table = part.drop(PARTITION_COLUMN).select(_STAGED_SELECT).to_arrow().cast(schema)
+        table = frame[group.get_column(_SPLIT_INDEX_COLUMN)].select(_STAGED_SELECT).to_arrow()
+        table = table.cast(schema)
         writer = writers.get(label)
         if writer is None:
             path = directory / f"{label}.parquet"
@@ -778,27 +850,18 @@ def _write_partitions(
         _WRITE_TABLE(writer, table)
 
 
-def _bucket(count: int) -> Callable[[str], str]:
-    """Return a mapper from a leading hex digit onto *count* ordered buckets.
+def staged_partitions(staging: Path) -> list[tuple[str, Path]]:
+    """Return the staged partitions in ascending key order.
 
-    Polars has no vectorized integer parse of a single hex character, so this is the one
-    place the transform drops to a row-wise mapping. It touches one short string per
-    source row, which is small enough not to matter, and it happens during staging where
-    the frame is already bounded.
+    This walk is the corpus's order, not an implementation detail of one build. Every
+    athlete-major canonical table is produced by reading the partitions in exactly this
+    sequence and concatenating what each yields, so ascending key order here is what puts
+    a table's rows in the order its digest was computed from.
+
+    Ascending key order is ascending order of the identity's leading digest character
+    (see `partition_label`), which is why it is a global order and not merely a per-partition
+    one: partition ranges are disjoint, so the walk cannot move backwards.
     """
-
-    def _to_bucket(value: str) -> str:
-        try:
-            digit = int(value, 16)
-        except ValueError:
-            return value
-        return f"{digit * count // 16:x}"
-
-    return _to_bucket
-
-
-def _staged_partitions(staging: Path) -> list[tuple[str, Path]]:
-    """Return the staged partitions in ascending key order."""
     directory = staging / "athlete"
     if not directory.is_dir():
         return []
@@ -1596,9 +1659,9 @@ def build_corpus(request: BuildRequest) -> BuildResult:
     )
     counters = BuildCounters()
 
-    _stage(csv_path, staging, source_id=source_id, config=settings, counters=counters)
+    stage_snapshot(csv_path, staging, source_id=source_id, config=settings, counters=counters)
 
-    partitions = _staged_partitions(staging)
+    partitions = staged_partitions(staging)
     if not partitions:
         msg = f"Staging produced no partitions for {csv_path}; the source appears to be empty."
         raise TransformError(msg)

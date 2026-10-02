@@ -298,7 +298,7 @@ def build(
         _fail(str(error))
     try:
         config = BuildConfig(chunk_rows=chunk_rows, batch_rows=batch_rows, partitions=partitions)
-    except ValueError as error:
+    except (TransformError, ValueError) as error:
         # A configuration that cannot be honoured is a usage error, and it is worth finding
         # out in a second rather than after the staging pass has begun.
         _fail(str(error), code=EXIT_USAGE)

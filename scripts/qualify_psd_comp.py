@@ -353,27 +353,60 @@ def _verify_through_the_cli(data_root: Path, digest: str) -> dict[str, Any]:
 # --------------------------------------------------------------------------
 
 
-def main() -> int:
-    """Run the qualification and write its JSON report."""
-    parser = argparse.ArgumentParser(description="Qualify a full PSD-COMP corpus build.")
-    parser.add_argument("--data-root", required=True, help="External PSD data root.")
-    parser.add_argument("--digest", required=True, help="Pinned snapshot digest.")
-    parser.add_argument("--report", required=True, help="Where to write the JSON report.")
-    parser.add_argument("--drop-staging", action="store_true", help="Delete staged rows after.")
-    parser.add_argument(
-        "--skip-second-build",
-        action="store_true",
-        help="Build once only. Reproducibility is then unproven and the report says so.",
+def _config_from(arguments: argparse.Namespace) -> BuildConfig:
+    """Return the build configuration, with only the overrides the caller supplied.
+
+    Overrides exist so a qualification can attribute a result to a configuration rather
+    than to the corpus: the defaults are the shipped ones, and every phase that uses a
+    non-default value records it.
+    """
+    defaults = BuildConfig()
+    return BuildConfig(
+        chunk_rows=arguments.chunk_rows or defaults.chunk_rows,
+        batch_rows=arguments.batch_rows or defaults.batch_rows,
+        partitions=arguments.partitions or defaults.partitions,
     )
-    parser.add_argument("--memory-limit", default="4GB", help="DuckDB ceiling for the audit.")
-    arguments = parser.parse_args()
 
-    os.environ["PSD_DATA_ROOT"] = str(Path(arguments.data_root))
-    data_root = Path(arguments.data_root)
-    digest = arguments.digest
-    relative = f"canonical/psd_comp/{digest}"
-    started_at = datetime.now(tz=UTC)
 
+@dataclass(slots=True)
+class Outcome:
+    """What one qualification run produced.
+
+    Attributes:
+        memory: The peak-memory tracker, for the process-wide figure.
+        phases: Every measured phase, in order.
+        first: The first corpus build.
+        first_manifest: The manifest the first build persisted.
+        second: The second corpus build, when one ran.
+        second_manifest: The manifest the second build persisted.
+        history: The derived athlete histories.
+        audit: The corpus audit.
+        verification: What ``psd openpowerlifting verify`` reported.
+    """
+
+    memory: PeakMemory
+    phases: list[Phase]
+    snapshot: Any
+    first: Any
+    first_manifest: dict[str, Any]
+    second: Any
+    second_manifest: dict[str, Any] | None
+    history: Any
+    audit: Any
+    verification: dict[str, Any]
+
+
+def _execute(settings: _Settings) -> Outcome:
+    """Run every measured phase and return what they produced.
+
+    Args:
+        settings: Everything the run needs, as one value so the phase list reads as a
+            sequence of steps rather than as a wall of parameters.
+    """
+    data_root = settings.data_root
+    digest = settings.digest
+    relative = settings.relative
+    config = settings.config
     with PeakMemory() as memory:
         recorder = Recorder(memory)
         snapshot = recorder.run(
@@ -392,15 +425,13 @@ def main() -> int:
                     csv_path=csv_path,
                     snapshot=snapshot,
                     data_root=data_root,
-                    config=BuildConfig(),
-                    keep_staging=not arguments.drop_staging,
+                    config=config,
+                    keep_staging=not settings.drop_staging,
                 )
             )
 
-        first = recorder.run("build-1", _build_once, source_rows=snapshot.row_count)
-        first_manifest = json.loads(
-            (data_root / relative / "manifest.json").read_text(encoding="utf-8")
-        )
+        def _manifest() -> dict[str, Any]:
+            return json.loads((data_root / relative / "manifest.json").read_text(encoding="utf-8"))
 
         def _histories() -> Any:
             return build_athlete_history(
@@ -413,20 +444,20 @@ def main() -> int:
                     dataset_dir=Path(relative),
                     data_root=data_root,
                     archive_sha256=digest,
-                    memory_limit=arguments.memory_limit,
+                    memory_limit=settings.memory_limit,
                 )
             )
 
+        first = recorder.run("build-1", _build_once, source_rows=snapshot.row_count)
+        first_manifest = _manifest()
         history = recorder.run("athlete-history", _histories)
         audit = recorder.run("audit", _audit)
 
         second: Any = None
         second_manifest: dict[str, Any] | None = None
-        if not arguments.skip_second_build:
+        if settings.second_build:
             second = recorder.run("build-2", _build_once, source_rows=snapshot.row_count)
-            second_manifest = json.loads(
-                (data_root / relative / "manifest.json").read_text(encoding="utf-8")
-            )
+            second_manifest = _manifest()
             recorder.run("athlete-history-2", _histories)
             recorder.run("audit-2", _audit)
 
@@ -434,11 +465,10 @@ def main() -> int:
         # would attribute another interpreter's memory to the build.
         verify_started = time.perf_counter()
         verification = _verify_through_the_cli(data_root, digest)
-        verify_seconds = time.perf_counter() - verify_started
         recorder.phases.append(
             Phase(
                 name="verify-cli",
-                seconds=verify_seconds,
+                seconds=time.perf_counter() - verify_started,
                 peak_rss_bytes=0,
                 details={
                     "note": (
@@ -448,6 +478,86 @@ def main() -> int:
                 },
             )
         )
+        return Outcome(
+            memory=memory,
+            phases=recorder.phases,
+            snapshot=snapshot,
+            first=first,
+            first_manifest=first_manifest,
+            second=second,
+            second_manifest=second_manifest,
+            history=history,
+            audit=audit,
+            verification=verification,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class _Settings:
+    """One qualification run's inputs."""
+
+    data_root: Path
+    digest: str
+    relative: str
+    config: BuildConfig
+    memory_limit: str
+    drop_staging: bool
+    second_build: bool
+
+
+def main() -> int:
+    """Run the qualification and write its JSON report."""
+    parser = argparse.ArgumentParser(description="Qualify a full PSD-COMP corpus build.")
+    parser.add_argument("--data-root", required=True, help="External PSD data root.")
+    parser.add_argument("--digest", required=True, help="Pinned snapshot digest.")
+    parser.add_argument("--report", required=True, help="Where to write the JSON report.")
+    parser.add_argument("--drop-staging", action="store_true", help="Delete staged rows after.")
+    parser.add_argument(
+        "--skip-second-build",
+        action="store_true",
+        help="Build once only. Reproducibility is then unproven and the report says so.",
+    )
+    parser.add_argument("--memory-limit", default="4GB", help="DuckDB ceiling for the audit.")
+    parser.add_argument(
+        "--chunk-rows",
+        type=int,
+        default=None,
+        help="Override the staging chunk size. The primary memory bound of the build.",
+    )
+    parser.add_argument(
+        "--batch-rows",
+        type=int,
+        default=None,
+        help="Override the canonical batch size handed to the writer.",
+    )
+    parser.add_argument(
+        "--partitions", type=int, default=None, help="Override the athlete partition count."
+    )
+    arguments = parser.parse_args()
+    config = _config_from(arguments)
+
+    os.environ["PSD_DATA_ROOT"] = str(Path(arguments.data_root))
+    data_root = Path(arguments.data_root)
+    digest = arguments.digest
+    relative = f"canonical/psd_comp/{digest}"
+    started_at = datetime.now(tz=UTC)
+
+    outcome = _execute(
+        _Settings(
+            data_root=data_root,
+            digest=digest,
+            relative=relative,
+            config=config,
+            memory_limit=arguments.memory_limit,
+            drop_staging=arguments.drop_staging,
+            second_build=not arguments.skip_second_build,
+        )
+    )
+    memory, recorder_phases = outcome.memory, outcome.phases
+    snapshot = outcome.snapshot
+    first, second = outcome.first, outcome.second
+    first_manifest, second_manifest = outcome.first_manifest, outcome.second_manifest
+    history, audit, verification = outcome.history, outcome.audit, outcome.verification
 
     canonical_bytes, canonical_files = directory_bytes(data_root / relative / "tables")
     derived_bytes, derived_files = directory_bytes(data_root / relative / "derived")
@@ -485,6 +595,13 @@ def main() -> int:
             "downloaded_at": snapshot.downloaded_at.isoformat(),
             "code_commit_at_acquisition": snapshot.code_commit,
             "column_count": len(snapshot.source_columns),
+        },
+        "build_config": {
+            "chunk_rows": config.chunk_rows,
+            "batch_rows": config.batch_rows,
+            "partitions": config.partitions,
+            "audit_memory_limit": arguments.memory_limit,
+            "dropped_staging": arguments.drop_staging,
         },
         "counts": {
             "source_rows": first.counters.source_rows,
@@ -590,10 +707,10 @@ def main() -> int:
             "unexpected_sex_values": list(audit.audit.anomalies.unexpected_sex_values[:20]),
             "source_disagreements": list(audit.audit.anomalies.source_disagreements),
         },
-        "phases": [phase.to_dict() for phase in recorder.phases],
+        "phases": [phase.to_dict() for phase in recorder_phases],
         "peak_rss_bytes": memory.peak_bytes,
         "peak_rss_mib": round(memory.peak_bytes / (1024 * 1024), 1),
-        "total_seconds": round(sum(phase.seconds for phase in recorder.phases), 3),
+        "total_seconds": round(sum(phase.seconds for phase in recorder_phases), 3),
     }
 
     if second is not None and second_manifest is not None:
