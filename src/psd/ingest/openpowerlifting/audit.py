@@ -292,6 +292,11 @@ _MASS_RESULT_KINDS: Final[tuple[str, ...]] = tuple(
 _BEST_RESULT_KINDS: Final[tuple[str, ...]] = tuple(
     kind for _column, kind, is_best in REPORTED_RESULT_SPECS if is_best
 )
+#: Everything the source publishes that is not a mass. Checked to *not* claim kilograms, so
+#: a Dots score can never be read as a load.
+_SCORING_RESULT_KINDS: Final[tuple[str, ...]] = tuple(
+    kind for _column, kind, _is_best in REPORTED_RESULT_SPECS if kind not in _MASS_RESULT_KINDS
+)
 _TOTAL_RESULT_KIND: Final[str] = "total"
 
 #: The canonical equipment value meaning "the source did not say". It is a declared
@@ -2695,13 +2700,7 @@ def _unit_audit(connection: duckdb.DuckDBPyConnection) -> UnitFidelityAudit:
     tolerance = repr(UNIT_TOLERANCE)
     mass_kinds = _sql_list(_MASS_RESULT_KINDS)
     best_kinds = _sql_list(_BEST_RESULT_KINDS)
-    scoring_kinds = _sql_list(
-        tuple(
-            kind
-            for kind, _column, _best in sorted(REPORTED_RESULT_SPECS)
-            if kind not in _MASS_RESULT_KINDS
-        )
-    )
+    scoring_kinds = _sql_list(_SCORING_RESULT_KINDS)
     bodyweight_kg_mismatches = _scalar(
         connection,
         "SELECT count(*) FROM competition WHERE bodyweight_raw IS NOT NULL"

@@ -68,6 +68,8 @@ __all__ = (
     "csv_text",
     "future_dated_rows",
     "identity_rows",
+    "open_ended_weight_class_rows",
+    "signed_value_rows",
     "transition_rows",
 )
 
@@ -436,6 +438,75 @@ def transition_rows() -> tuple[dict[str, Any], ...]:
     )
 
 
+def signed_value_rows() -> tuple[dict[str, Any], ...]:
+    """Rows exercising the sign encoding the unit audit has to read correctly.
+
+    ``Zed Signed`` fails a second squat and a second deadlift, and publishes a negative
+    bench best -- the source's convention for "the lowest weight attempted and failed".
+    The canonical corpus must hold a positive load with a ``bad_lift`` result for the two
+    attempts, and a magnitude plus a ``failed_attempt_only`` label for the best. A unit
+    check that cannot tell a signed attempt from a negative load would report zero on all
+    three of these and be worth nothing.
+    """
+    return (
+        {
+            "Name": "Zed Signed",
+            "Sex": "M",
+            "Age": "34",
+            "BodyweightKg": "93.0",
+            "WeightClassKg": "-105",
+            "Equipment": "Raw",
+            "Squat1Kg": "220",
+            "Squat2Kg": "-225",
+            "Squat3Kg": "230",
+            "Best3SquatKg": "230",
+            "Bench1Kg": "-130",
+            "Bench2Kg": "135",
+            "Best3BenchKg": "-130",
+            "Deadlift1Kg": "250",
+            "Deadlift2Kg": "-255",
+            "Deadlift3Kg": "260",
+            "Best3DeadliftKg": "260",
+            "TotalKg": "750",
+            "Place": "1",
+        },
+    )
+
+
+def open_ended_weight_class_rows() -> tuple[dict[str, Any], ...]:
+    """One lifter whose ``WeightClassKg`` is open-ended, beside one whose class is bounded.
+
+    ``90+`` states a floor and no maximum, so PSD keeps the label verbatim rather than
+    reading a maximum out of it. ``-105`` states an upper bound and is equally not a
+    measurement. Both are published here so the unit audit's open-ended count has a
+    positive case and the bounded form is present for contrast.
+    """
+    return (
+        {
+            "Name": "Ivy Openended",
+            "Sex": "F",
+            "Age": "30",
+            "Equipment": "Raw",
+            "BodyweightKg": "92.0",
+            "WeightClassKg": "90+",
+            "Squat1Kg": "150",
+            "Best3SquatKg": "150",
+            "Place": "1",
+        },
+        {
+            "Name": "Jan Bounded",
+            "Sex": "M",
+            "Age": "31",
+            "Equipment": "Raw",
+            "BodyweightKg": "104.0",
+            "WeightClassKg": "-105",
+            "Squat1Kg": "190",
+            "Best3SquatKg": "190",
+            "Place": "1",
+        },
+    )
+
+
 def audit_rows() -> tuple[dict[str, Any], ...]:
     """Every diagnostic row, which is the corpus the classification tests read."""
     return (
@@ -444,6 +515,7 @@ def audit_rows() -> tuple[dict[str, Any], ...]:
         *age_consistent_rows(),
         *age_inconsistent_rows(),
         *transition_rows(),
+        *signed_value_rows(),
     )
 
 
@@ -507,32 +579,35 @@ def build_diagnostic_corpus(
 
 
 def copy_corpus_with_modified_table(
-    corpus: DiagnosticCorpus,
-    destination: Path,
     *,
+    data_root: Path,
+    relative: Path,
+    destination: Path,
     table: str,
     modify: pl.Expr,
 ) -> Path:
-    """Copy a fixture corpus into *destination*, rewriting exactly one table.
+    """Copy a built corpus into *destination*, rewriting exactly one table.
 
     A deliberately broken corpus is how a diagnostic proves it is not vacuous: the check
     must fail on data that is *almost* right, and it cannot do that on a corpus the
     transform already produced correctly. Every other table is copied byte-for-byte and
-    the manifest is carried over unchanged, so nothing but the named column can be
-    responsible for a finding.
+    the manifest is carried over unchanged -- including its digests -- so nothing but the
+    named column can be responsible for a finding.
 
     Args:
-        corpus: The corpus to copy.
-        destination: Directory to build the copy in; it is created.
+        data_root: The external PSD data root holding the corpus.
+        relative: Where the corpus lives, relative to that root.
+        destination: Directory to build the copy under; it is created. The copy's data root
+            is ``<destination>/data``.
         table: Canonical table to rewrite.
-        modify: A Polars expression replacing a column.
+        modify: A Polars expression producing the replacement column values.
 
     Returns:
-        The copied corpus directory, relative to the *copy's* data root.
+        The copied corpus directory, relative to the copy's data root.
     """
     target = destination / "data" / "broken"
     (target / "tables").mkdir(parents=True)
-    source_tables = corpus.data_root / corpus.relative / "tables"
+    source_tables = data_root / relative / "tables"
     frame = pl.read_parquet(source_tables / f"{table}.parquet")
     payload = frame.with_columns(modify)
     for name in table_names():
@@ -547,6 +622,6 @@ def copy_corpus_with_modified_table(
             shutil.copyfile(
                 source_tables / f"{name}.parquet", target / "tables" / f"{name}.parquet"
             )
-    shutil.copyfile(corpus.data_root / corpus.relative / "manifest.json", target / "manifest.json")
+    shutil.copyfile(data_root / relative / "manifest.json", target / "manifest.json")
     read_manifest("broken", data_root=destination / "data")
     return Path("broken")

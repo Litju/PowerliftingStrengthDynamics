@@ -20,6 +20,7 @@ from typer.testing import CliRunner
 
 from psd.cli.main import app as root_app
 from psd.ingest.openpowerlifting.acquire import read_pinned_snapshot, snapshot_directory
+from psd.ingest.openpowerlifting.audit import AUDIT_VERSION
 from psd.ingest.openpowerlifting.contract import expected_columns
 from psd.paths import DATA_ROOT_ENV_VAR
 from tests.fixtures.openpowerlifting import SAMPLE_ROW_COUNT, write_sample_csv
@@ -336,7 +337,7 @@ def test_audit_json_is_the_stored_report(data_root: Path, source_csv: Path) -> N
 
     assert result.exit_code == EXIT_OK
     assert result.output.encode("utf-8") == stored
-    assert json.loads(result.output)["audit_version"] == "psd-comp-audit/1"
+    assert json.loads(result.output)["audit_version"] == AUDIT_VERSION
 
 
 def test_audit_reports_irregularities_without_failing(data_root: Path, source_csv: Path) -> None:
