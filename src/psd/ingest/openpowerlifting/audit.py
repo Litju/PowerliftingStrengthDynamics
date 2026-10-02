@@ -41,6 +41,39 @@ melted attempt table looks identical whether an absent cell produced no row or a
 row, and a signed attempt looks like a negative load to anything that has forgotten the
 sign is the result. :func:`expansion_invariants` turns each statement into a count-level
 check against the persisted tables, so the documentation and the corpus can be compared.
+
+The four closure diagnostics
+----------------------------
+
+:func:`audit_corpus` answers four questions the corpus itself cannot, and each answer is
+kept in its own section rather than folded into the anomaly list:
+
+Identity stability
+    What the source identity key can and cannot tell us, including the one thing it
+    cannot answer at all. OpenPowerlifting publishes ``Name`` *as* the identity key and
+    publishes no independent stable person identifier, so a historical name change is
+    **not identifiable** from this source. The audit says so in machine-readable form
+    rather than shipping a plausible-looking detector that could only ever be guessing.
+
+Suspicious chronology
+    Three source-grounded checks: competitions dated after the pinned snapshot, meet
+    identities spanning more than one source date, and per-identity age/date
+    inconsistency under the source's own documented age semantics.
+
+Unit consistency
+    A raw-to-canonical *mass fidelity* audit. The source states its masses in kilograms
+    and carries no per-row unit field, so the honest question is not "does this look like
+    a plausible lifter" but "does the canonical value equal the source value, with the
+    sign carrying only the attempt result". No plausibility heuristic is applied and no
+    pounds are inferred.
+
+Equipment and federation transitions
+    Descriptive, computed per athlete-meet rather than per source row so that several
+    event entries at one meet are never read as a longitudinal switch.
+
+Each section declares a :class:`~psd.schema.vocabulary.FindingClass`, because a count
+whose meaning is unstated cannot be acted on: a source anomaly is reported, an invariant
+failure is a defect, a transition is ordinary, and a limitation is a silence.
 """
 
 from __future__ import annotations
@@ -61,19 +94,28 @@ from psd.ingest.openpowerlifting.acquire import (
     read_pinned_snapshot,
     snapshot_directory,
 )
-from psd.ingest.openpowerlifting.contract import SourceSchemaReview, review_source_schema
+from psd.ingest.openpowerlifting.contract import (
+    SOURCE_COLUMNS,
+    SourceColumnDisposition,
+    SourceSchemaReview,
+    review_source_schema,
+)
 from psd.ingest.openpowerlifting.history import CompetitionEventMembership
+from psd.ingest.openpowerlifting.mapping import REPORTED_RESULT_SPECS
 from psd.ingest.openpowerlifting.snapshot import OpenPowerliftingSnapshot
 from psd.ingest.openpowerlifting.transform import corpus_table_names
 from psd.paths import resolve_within_data_root
 from psd.provenance.manifest import DatasetManifest, manifest_digest
 from psd.schema.registry import table_spec
+from psd.schema.vocabulary import EquipmentClass, FindingClass
 from psd.serialization.dataset import artifact_paths, read_manifest
 
 __all__ = (
     "AUDIT_DIRNAME",
     "AUDIT_VERSION",
     "EXPANSION_RULES",
+    "MASS_SOURCE_FIELDS",
+    "NAME_CHANGE_LIMITATION_REASON",
     "AnomalyAudit",
     "AthleteContextAudit",
     "AttemptAudit",
@@ -82,15 +124,23 @@ __all__ = (
     "AuditRequest",
     "AuditResult",
     "CategoryCoverage",
+    "ChronologyAudit",
     "CorpusAudit",
     "CoverageAudit",
+    "DiagnosticFinding",
+    "DiagnosticsAudit",
     "EntityAudit",
     "ExpansionAudit",
     "ExpansionRule",
+    "FindingClassMeaning",
+    "IdentityStabilityAudit",
     "Invariant",
     "LongitudinalAudit",
     "PerformanceAudit",
     "SourceAudit",
+    "TransitionAudit",
+    "TransitionFieldAudit",
+    "UnitFidelityAudit",
     "audit_corpus",
     "audit_markdown",
     "corpus_expansion_invariants",
@@ -102,7 +152,7 @@ __all__ = (
 
 #: Version of the audit report contract. Bumped when a section's meaning changes, so a
 #: stored report can never be read as describing something it did not describe.
-AUDIT_VERSION: Final[str] = "psd-comp-audit/1"
+AUDIT_VERSION: Final[str] = "psd-comp-audit/2"
 
 #: Where the audit lives inside a dataset directory. Outside ``tables/``, like every other
 #: derived artifact: an audit is not a canonical table and must not enter the canonical
@@ -174,6 +224,80 @@ _MEET_COUNT_BUCKETS: Final[tuple[tuple[str, int, int], ...]] = (
     ("20-49 meets", 20, 49),
     ("50 or more meets", 50, 1_000_000),
 )
+
+#: Tolerance for the raw-to-canonical mass comparisons. The transform copies the source
+#: float rather than recomputing it, so this exists to absorb decimal representation and
+#: not to paper over a real conversion: a genuine pounds-to-kilograms conversion would
+#: miss by orders of magnitude, not by the last bit.
+UNIT_TOLERANCE: Final[float] = 1e-9
+
+#: The source fields that carry a mass, and therefore have a unit to be wrong about.
+#: Declared from the one place that classifies every source column, so this list cannot
+#: drift from the contract the build actually enforced.
+MASS_SOURCE_FIELDS: Final[tuple[str, ...]] = tuple(
+    spec.name
+    for spec in SOURCE_COLUMNS
+    if spec.disposition is SourceColumnDisposition.MAPPED
+    and (spec.name.endswith("Kg") or spec.destination == "competition.bodyweight_kg")
+)
+
+#: Why a historical name change is not reported. Stated once and carried into the report
+#: verbatim: the reason is a property of the source, not of this audit, and a reader who
+#: cannot find the sentence explaining an absent diagnostic will assume it was forgotten.
+NAME_CHANGE_LIMITATION_REASON: Final[str] = (
+    "OpenPowerlifting Name is itself the source identity key"
+)
+
+#: The one question the pinned source cannot answer about identity, and the label a
+#: machine-readable consumer is expected to test for.
+NAME_CHANGE_LIMITATION_QUESTION: Final[str] = (
+    "did any source athlete identity change name over its longitudinal history"
+)
+
+#: Which basis supplied the pinned snapshot date, recorded beside every date-dependent
+#: chronology count so a reader knows whether the date came from the service or from the
+#: archive's own filename.
+SNAPSHOT_DATE_BASIS_SERVICE: Final[str] = "service_reported"
+SNAPSHOT_DATE_BASIS_ARCHIVE: Final[str] = "archive_declared"
+SNAPSHOT_DATE_BASIS_UNAVAILABLE: Final[str] = "unavailable"
+
+#: How many consecutive longitudinal state changes are grouped together when reporting a
+#: distribution over athletes. A handful of shape buckets, because a raw per-athlete
+#: histogram would be a corpus of numbers nobody reads.
+_TRANSITION_BUCKETS: Final[tuple[tuple[str, int, int], ...]] = (
+    ("0 transitions", 0, 0),
+    ("1 transition", 1, 1),
+    ("2-3 transitions", 2, 3),
+    ("4-9 transitions", 4, 9),
+    ("10-19 transitions", 10, 19),
+    ("20-49 transitions", 20, 49),
+    ("50 or more transitions", 50, 1_000_000),
+)
+
+#: Collision groups are reported by how many source name keys share one base name.
+_BASE_GROUP_BUCKETS: Final[tuple[tuple[str, int, int], ...]] = (
+    ("2 name keys", 2, 2),
+    ("3 name keys", 3, 3),
+    ("4-5 name keys", 4, 5),
+    ("6-10 name keys", 6, 10),
+    ("11 or more name keys", 11, 1_000_000),
+)
+
+#: Result kinds that carry a mass, and the subset carrying best-lift semantics. Both are
+#: derived from the one declared table of source-column-to-result-kind mappings, so a new
+#: reported column cannot be silently excluded from the unit audit.
+_MASS_RESULT_KINDS: Final[tuple[str, ...]] = tuple(
+    kind for column, kind, _is_best in REPORTED_RESULT_SPECS if column.endswith("Kg")
+)
+_BEST_RESULT_KINDS: Final[tuple[str, ...]] = tuple(
+    kind for _column, kind, is_best in REPORTED_RESULT_SPECS if is_best
+)
+_TOTAL_RESULT_KIND: Final[str] = "total"
+
+#: The canonical equipment value meaning "the source did not say". It is a declared
+#: unknown, not an equipment category, so it is excluded from transition state exactly as
+#: a null federation is: a meet where the source stayed silent has no state to order.
+_UNKNOWN_EQUIPMENT_CLASS: Final[str] = EquipmentClass.UNKNOWN.value
 
 
 class AuditError(RuntimeError):
@@ -548,6 +672,364 @@ class AnomalyAudit(_Model):
     source_disagreements: tuple[str, ...]
 
 
+# --------------------------------------------------------------------------
+# closure diagnostics
+# --------------------------------------------------------------------------
+
+
+class DiagnosticLimitation(_Model):
+    """A question the pinned source cannot answer, stated rather than approximated.
+
+    A limitation is reported as a record rather than as an absent field for one reason:
+    "the audit looked and found nothing" and "the source does not carry this at all"
+    render identically in JSON, and a consumer that cannot tell them apart will read a
+    silence as a clean result.
+
+    Attributes:
+        question: What could not be determined.
+        identifiable: Always ``False`` for a limitation that exists. Explicit so that a
+            machine-readable consumer can test for it rather than infer it from a null.
+        reason: Why the source does not support the question.
+    """
+
+    question: str
+    identifiable: bool = False
+    reason: str
+
+
+class IdentityStabilityAudit(_Model):
+    """What the source identity key can and cannot support.
+
+    The finding class is :attr:`FindingClass.SOURCE_LIMITATION` because the governing
+    result of this section is a *silence*: OpenPowerlifting publishes ``Name`` as its
+    identity key and exposes no independent stable person identifier, so no historical
+    name change is discoverable here. Everything else in the section is either a genuine
+    conflict in the source or evidence about how the ``#N`` disambiguator is used.
+
+    Country, state, federation, body mass, age class, and division are deliberately
+    absent: they legitimately vary over a career, and reading any of them as an identity
+    change would manufacture findings out of ordinary longitudinal variation.
+
+    Attributes:
+        finding_class: How these counts must be read.
+        identities: Source identities in the corpus.
+        names_under_multiple_sex_categories: Exact source ``Name`` keys the source
+            publishes under more than one reported sex category. One flagged identity
+            each; never resolved by picking one.
+        name_keys_mapping_to_several_identities: Name keys that produced more than one
+            canonical identity. The declared identity is the name alone, so this must be
+            zero and a non-zero value is a transform defect.
+        identities_mapping_to_several_name_keys: Canonical identities carrying more than
+            one source name key. Likewise a transform defect rather than a source fact.
+        disambiguated_names: Name keys carrying the source's trailing ``#N`` disambiguator.
+        base_name_collision_groups: Distinct base names -- a name key with any trailing
+            ``#N`` removed -- shared by more than one name key. This is the observable
+            shape of the source's own same-name handling.
+        largest_base_name_collision_group: Most name keys sharing one base name.
+        base_name_group_size_distribution: Collision groups by how many keys they hold.
+        base_names_also_published_unsuffixed: Collision groups where the bare base name is
+            itself published as a separate identity. The source can then be describing
+            one lifter under two keys, which is precisely why the identities are not
+            merged.
+        base_name_examples: The largest collision groups, with their member keys.
+        limitations: The questions this source cannot answer.
+    """
+
+    finding_class: FindingClass = FindingClass.SOURCE_LIMITATION
+    identities: int
+    names_under_multiple_sex_categories: int
+    name_keys_mapping_to_several_identities: int
+    identities_mapping_to_several_name_keys: int
+    disambiguated_names: int
+    base_name_collision_groups: int
+    largest_base_name_collision_group: int
+    base_name_group_size_distribution: Mapping[str, int]
+    base_names_also_published_unsuffixed: int
+    base_name_examples: tuple[Mapping[str, object], ...]
+    limitations: tuple[DiagnosticLimitation, ...]
+
+
+class ChronologyAudit(_Model):
+    """Suspicious chronology, measured against source facts only.
+
+    Three independent questions, each grounded in something the source states:
+
+    * a competition dated **after** the pinned snapshot cannot have been in it;
+    * a meet identity spanning more than one source date would mean the six-field meet
+      rule disagreed with itself;
+    * an identity whose ages cannot all describe the same person has a date or age the
+      source recorded inconsistently.
+
+    The age check uses the source's documented age semantics rather than a tolerance:
+    an exact age ``n`` at meet year ``Y`` admits birth year ``Y-n`` or ``Y-n-1``
+    depending on whether the birthday had passed, and an approximate age ``n+0.5`` is
+    the midpoint of that range and therefore admits exactly ``Y-(n+1)``. Intersecting
+    those sets across an identity's history yields birth years compatible with every
+    observation, and an empty intersection is a reportable inconsistency.
+
+    This is a diagnostic. No age is rewritten, and no identity is split or merged from it.
+
+    Attributes:
+        finding_class: How these counts must be read.
+        pinned_snapshot_date: The snapshot date the future-dated check used, as the
+            source published it.
+        pinned_snapshot_date_basis: Which statement supplied that date.
+        future_dated_competitions: Participations dated after the pinned snapshot.
+        future_dated_meets: Meet identities dated after the pinned snapshot.
+        future_dated_examples: Named examples.
+        meets_spanning_multiple_dates: Meet identities with more than one distinct source
+            date. Zero by construction, and reported precisely because that construction
+            is a claim somebody can check.
+        meet_date_examples: Named examples.
+        age_observations: Participations carrying both a readable age and a meet date.
+        identities_with_age_observations: Source identities among them.
+        identities_with_multiple_age_observations: Identities whose history offers more
+            than one age observation, the only ones an intersection can speak about.
+        identities_without_a_compatible_birth_year: Identities whose observations admit no
+            common birth year.
+        incompatible_identity_examples: Named examples, worst first.
+        age_semantics: The compatibility rule, in words, as applied.
+    """
+
+    finding_class: FindingClass = FindingClass.SOURCE_ANOMALY
+    pinned_snapshot_date: str | None
+    pinned_snapshot_date_basis: str
+    future_dated_competitions: int | None
+    future_dated_meets: int | None
+    future_dated_examples: tuple[Mapping[str, object], ...]
+    meets_spanning_multiple_dates: int
+    meet_date_examples: tuple[Mapping[str, object], ...]
+    age_observations: int
+    identities_with_age_observations: int
+    identities_with_multiple_age_observations: int
+    identities_without_a_compatible_birth_year: int
+    incompatible_identity_examples: tuple[Mapping[str, object], ...]
+    age_semantics: str
+
+
+class UnitFidelityAudit(_Model):
+    """Raw-to-canonical mass fidelity.
+
+    Not a plausibility check. The bulk source defines ``BodyweightKg``, the twelve
+    attempt ``*Kg`` columns, the three ``Best3*Kg`` columns and ``TotalKg`` in kilograms
+    and carries no per-row unit field, so the question worth answering is whether the
+    canonical value is the source value -- sign included in its meaning -- rather than
+    whether a 74 kg lifter looks like a lifter. A physiological range would be a
+    different, assumption-heavy diagnostic that this deliberately does not run.
+
+    The scoring-system columns (``Dots``, ``Wilks``, ``Glossbrenner``, ``Goodlift``) are
+    dimensionless and are checked to *not* claim kilograms, so a consumer can never read
+    a Dots score as a mass.
+
+    Every mismatch counter here is expected to be zero for a correct transform. A
+    non-zero value is a defect in PSD.
+
+    Attributes:
+        finding_class: How these counts must be read.
+        declared_source_unit: What the source documentation states its masses are.
+        mass_source_fields: The source columns carrying a mass, taken from the contract.
+        bodyweight_rows_checked: Participations carrying a source body mass.
+        bodyweight_kg_mismatches: Where the canonical body mass is not the source value.
+        bodyweight_unit_mismatches: Where a recorded body mass is not labelled kilograms.
+        bodyweight_absent_became_zero: Where an absent body mass became a zero. Absence
+            must stay absence.
+        attempt_rows_checked: Canonical attempt rows.
+        attempt_load_kg_mismatches: Where the canonical load is not ``abs(source)``.
+        attempt_sign_result_mismatches: Where the source sign disagrees with the result.
+        attempt_unit_mismatches: Where an attempt load is not labelled kilograms.
+        attempt_loads_not_positive: Where a stored load is zero or negative.
+        reported_rows_checked: Canonical reported-result rows.
+        reported_value_mismatches: Where the canonical value is not the magnitude of the
+            source value.
+        reported_mass_rows_checked: Reported rows carrying a mass.
+        reported_mass_unit_mismatches: Where a mass-bearing result is not labelled kilograms.
+        reported_best_rows_checked: Reported best-lift rows.
+        reported_best_semantics_mismatches: Where the best-lift reading disagrees with the
+            sign of the source value.
+        reported_totals_checked: Reported totals.
+        reported_total_unit_mismatches: Where a total is not labelled kilograms.
+        open_ended_weight_classes: ``WeightClassKg`` values in the open-ended ``90+`` form.
+        open_ended_weight_classes_coerced: Open-ended classes that reached canonical data
+            as a bare measurement. The label is persisted verbatim and no numeric
+            weight-class column exists, so this must be zero.
+        scoring_rows_checked: Dimensionless reported rows.
+        scoring_rows_claiming_a_mass_unit: Scoring rows labelled kilograms.
+        mismatch_total: Sum of every mismatch counter above: the single number a correct
+            transform must report as zero.
+    """
+
+    finding_class: FindingClass = FindingClass.TRANSFORMATION_INVARIANT_FAILURE
+    declared_source_unit: str
+    mass_source_fields: tuple[str, ...]
+    bodyweight_rows_checked: int
+    bodyweight_kg_mismatches: int
+    bodyweight_unit_mismatches: int
+    bodyweight_absent_became_zero: int
+    attempt_rows_checked: int
+    attempt_load_kg_mismatches: int
+    attempt_sign_result_mismatches: int
+    attempt_unit_mismatches: int
+    attempt_loads_not_positive: int
+    reported_rows_checked: int
+    reported_value_mismatches: int
+    reported_mass_rows_checked: int
+    reported_mass_unit_mismatches: int
+    reported_best_rows_checked: int
+    reported_best_semantics_mismatches: int
+    reported_totals_checked: int
+    reported_total_unit_mismatches: int
+    open_ended_weight_classes: int
+    open_ended_weight_classes_coerced: int
+    scoring_rows_checked: int
+    scoring_rows_claiming_a_mass_unit: int
+    mismatch_total: int
+
+
+class TransitionFieldAudit(_Model):
+    """One longitudinal state field's transitions, computed per athlete-meet.
+
+    Attributes:
+        field: The canonical column whose value is treated as the state.
+        source_column: The source column it came from.
+        athlete_meets: Athlete-meets in the corpus.
+        athlete_meets_with_a_known_state: Athlete-meets where the source stated exactly
+            one value.
+        intra_meet_state_conflicts: Athlete-meets where the source stated more than one
+            value. No order is invented inside a meet, so these take no part in the
+            transition count.
+        total_transitions: Changes between consecutive known states.
+        athletes_with_transitions: Source identities with at least one change.
+        transitions_per_athlete: Athletes bucketed by how many changes they have.
+    """
+
+    field: str
+    source_column: str
+    athlete_meets: int
+    athlete_meets_with_a_known_state: int
+    intra_meet_state_conflicts: int
+    total_transitions: int
+    athletes_with_transitions: int
+    transitions_per_athlete: Mapping[str, int]
+
+
+class TransitionAudit(_Model):
+    """Descriptive equipment and federation transitions over a competition history.
+
+    Computed per **athlete-meet**, never per source row: a lifter who entered both the
+    ``SBD`` and the ``B`` at one meet produces two source rows, and reading those as two
+    observations of one meet would turn a single result into an invented switch.
+
+    An athlete-meet where the source stated more than one value for a field is reported as
+    an *intra-meet state conflict* and excluded from the ordering, because a meet has no
+    internal order to break a tie with. A meet where the source stated nothing contributes
+    no state either, so a long gap in reporting cannot be read as a change.
+
+    Equipment here is the competition **category** -- what the rules allowed -- and is
+    never a claim about the gear a lifter actually wore.
+
+    Attributes:
+        finding_class: How these counts must be read.
+        grouping: The unit transitions are computed at.
+        ordering: The key athlete-meets are ordered by.
+        equipment_reading: What the equipment column means, restated in the report.
+        unknown_is_a_state: Always ``False``. A declared unknown is an absence, not a
+            state to transition into or out of.
+        fields: One entry per tracked field.
+    """
+
+    finding_class: FindingClass = FindingClass.DESCRIPTIVE_LONGITUDINAL_TRANSITION
+    grouping: str = "athlete_id + competition_meet_id"
+    ordering: str = "competition_date, competition_meet_id"
+    equipment_reading: str = (
+        "equipment_class is the competition category, i.e. the equipment the rules "
+        "allowed; it is not evidence of the equipment an athlete actually wore"
+    )
+    unknown_is_a_state: bool = False
+    fields: tuple[TransitionFieldAudit, ...]
+
+    def field(self, name: str) -> TransitionFieldAudit:
+        """Return the entry for *name*.
+
+        Raises:
+            KeyError: No field by that name is tracked.
+        """
+        for entry in self.fields:
+            if entry.field == name:
+                return entry
+        raise KeyError(name)
+
+
+class FindingClassMeaning(_Model):
+    """What one finding class means and what a reader should do with it.
+
+    Attributes:
+        finding_class: The class being explained.
+        meaning: One sentence on what a count in this class is.
+        treatment: What the corpus does about it.
+    """
+
+    finding_class: FindingClass
+    meaning: str
+    treatment: str
+
+
+class DiagnosticFinding(_Model):
+    """One classified count from one diagnostic family.
+
+    Attributes:
+        family: Which diagnostic section produced the count.
+        name: Stable identifier for the count.
+        finding_class: What the count means.
+        count: The count itself. Negative values never appear; ``None`` is used where a
+            count could not be measured, which :class:`UnitFidelityAudit` never needs and
+            :class:`ChronologyAudit` does when the snapshot date is unavailable.
+        statement: What the count counts, in words.
+    """
+
+    family: str
+    name: str
+    finding_class: FindingClass
+    count: int | None
+    statement: str
+
+
+class DiagnosticsAudit(_Model):
+    """The four closure diagnostic families and the classification index over them.
+
+    ``findings`` is a flattened index, not a replacement: each count is still in its own
+    typed section, and the index exists so a consumer can filter by class without walking
+    four schemas. A count appearing in both places is the same count, produced once.
+
+    Attributes:
+        identity: Identity and name stability, and what it cannot show.
+        chronology: Suspicious chronology.
+        units: Raw-to-canonical mass fidelity.
+        transitions: Equipment and federation transitions.
+        finding_classes: What each class means.
+        findings: Every reported count, classified.
+    """
+
+    identity: IdentityStabilityAudit
+    chronology: ChronologyAudit
+    units: UnitFidelityAudit
+    transitions: TransitionAudit
+    finding_classes: tuple[FindingClassMeaning, ...]
+    findings: tuple[DiagnosticFinding, ...]
+
+    def findings_of(self, finding_class: FindingClass) -> tuple[DiagnosticFinding, ...]:
+        """Return the findings belonging to *finding_class*."""
+        return tuple(item for item in self.findings if item.finding_class is finding_class)
+
+    @property
+    def failed_fidelity_findings(self) -> tuple[DiagnosticFinding, ...]:
+        """Non-zero transformation-invariant failures: PSD defects, not source facts."""
+        return tuple(
+            item
+            for item in self.findings_of(FindingClass.TRANSFORMATION_INVARIANT_FAILURE)
+            if item.count
+        )
+
+
 class ExpansionRule(_Model):
     """What creates a row in an expanded table, stated as four questions.
 
@@ -778,6 +1260,7 @@ class CorpusAudit(_Model):
         athlete_context: Body mass, age, weight class, and category coverage.
         anomalies: Source irregularities, reported and not repaired.
         expansion: The declared expansion contract and its count-level checks.
+        diagnostics: The four closure diagnostic families, each classified.
         generated_at: Timezone-aware UTC instant the report was produced.
     """
 
@@ -795,6 +1278,7 @@ class CorpusAudit(_Model):
     athlete_context: AthleteContextAudit
     anomalies: AnomalyAudit
     expansion: ExpansionAudit
+    diagnostics: DiagnosticsAudit
     generated_at: datetime
 
     @field_validator("generated_at")
@@ -903,8 +1387,28 @@ class CorpusAudit(_Model):
             f"  rules          {len(self.expansion.rules)}",
             f"  invariants     {len(self.expansion.invariants)},"
             f" {len(self.failed_invariants)} failing",
+            "",
+            "diagnostics by finding class",
         ]
+        lines.extend(_finding_class_lines(self.diagnostics))
         return "\n".join(lines)
+
+
+def _finding_class_lines(diagnostics: DiagnosticsAudit) -> list[str]:
+    """Return the classified diagnostic counts, grouped by finding class.
+
+    Grouped rather than flattened: a reader who sees a source anomaly and a transform
+    defect in one undifferentiated list learns nothing about either. Within a class the
+    counts stay in their declared order so two reports of the same corpus read alike.
+    """
+    lines: list[str] = []
+    for meaning in diagnostics.finding_classes:
+        found = diagnostics.findings_of(meaning.finding_class)
+        lines.append(f"  {meaning.finding_class.value} ({len(found)} counts)")
+        for item in found:
+            count = "not measurable" if item.count is None else f"{item.count:,}"
+            lines.append(f"    {count:>14}  {item.name}")
+    return lines
 
 
 def _schema_line(audit: CorpusAudit) -> str:
@@ -986,6 +1490,7 @@ def audit_markdown(audit: CorpusAudit) -> str:
         "- duplicate primary keys: "
         f"`{ {k: v for k, v in audit.entities.duplicate_primary_key_rows.items() if v} }`",
         "",
+        *_diagnostic_sections(audit.diagnostics),
         "## Expansion contract",
         "",
         "| table | source field | absent source value | zero | negative |",
@@ -1007,6 +1512,210 @@ def audit_markdown(audit: CorpusAudit) -> str:
         )
     lines.append("")
     return "\n".join(lines)
+
+
+def _diagnostic_sections(diagnostics: DiagnosticsAudit) -> list[str]:
+    """Return the Markdown rendering of all four closure diagnostic families."""
+    identity = diagnostics.identity
+    chronology = diagnostics.chronology
+    units = diagnostics.units
+    transitions = diagnostics.transitions
+    future = (
+        f"{chronology.future_dated_competitions:,}"
+        if chronology.future_dated_competitions is not None
+        else "not measurable (no pinned snapshot date)"
+    )
+    future_meets = (
+        f"{chronology.future_dated_meets:,}"
+        if chronology.future_dated_meets is not None
+        else "not measurable (no pinned snapshot date)"
+    )
+    lines: list[str] = [
+        "## Diagnostics",
+        "",
+        "Findings are classified, because the four classes call for four different",
+        "responses and a single undifferentiated warning bucket destroys that",
+        "distinction.",
+        "",
+        "| finding class | what a count in this class is | treatment |",
+        "| --- | --- | --- |",
+    ]
+    lines.extend(
+        f"| `{meaning.finding_class.value}` | {meaning.meaning} | {meaning.treatment} |"
+        for meaning in diagnostics.finding_classes
+    )
+    lines.extend(
+        [
+            "",
+            "### Identity and name stability",
+            "",
+            f"- source identities: {identity.identities:,}",
+            f"- names under more than one reported sex category:"
+            f" {identity.names_under_multiple_sex_categories:,}",
+            f"- disambiguated `#N` names: {identity.disambiguated_names:,}",
+            f"- base-name collision groups: {identity.base_name_collision_groups:,}"
+            f" (largest {identity.largest_base_name_collision_group:,})",
+            f"- collision groups where the bare base name is also published:"
+            f" {identity.base_names_also_published_unsuffixed:,}",
+            f"- name keys mapped to several identities:"
+            f" {identity.name_keys_mapping_to_several_identities:,}",
+            f"- identities mapped to several name keys:"
+            f" {identity.identities_mapping_to_several_name_keys:,}",
+            "",
+            _bucket_table(
+                "Base-name collision group size", identity.base_name_group_size_distribution
+            ),
+            "",
+            "**What this source cannot show:**",
+            "",
+        ]
+    )
+    for limitation in identity.limitations:
+        marker = "identifiable" if limitation.identifiable else "**not identifiable**"
+        lines.append(f"- {limitation.question}: {marker} - {limitation.reason}")
+    lines.extend(
+        [
+            "",
+            "### Suspicious chronology",
+            "",
+            f"- pinned snapshot date: `{chronology.pinned_snapshot_date or 'not reported'}`"
+            f" (basis: {chronology.pinned_snapshot_date_basis})",
+            f"- future-dated participations: {future}",
+            f"- future-dated meets: {future_meets}",
+            f"- meet identities spanning more than one source date:"
+            f" {chronology.meets_spanning_multiple_dates:,}",
+            f"- age observations: {chronology.age_observations:,} across"
+            f" {chronology.identities_with_age_observations:,} identities;",
+            f"  {chronology.identities_with_multiple_age_observations:,} identities have more"
+            " than one",
+            f"- identities with no birth year compatible with every age observation:"
+            f" {chronology.identities_without_a_compatible_birth_year:,}",
+            "",
+            f"Age compatibility rule: {chronology.age_semantics}.",
+            "",
+            "### Unit consistency (raw-to-canonical mass fidelity)",
+            "",
+            f"The pinned source documents its masses in {units.declared_source_unit} and"
+            " carries no per-row unit field, so this section asks whether the canonical"
+            " value is the source value rather than whether a lifter looks plausible. No"
+            " plausibility heuristic runs and no pounds are inferred.",
+            "",
+            "| check | rows checked | mismatches |",
+            "| --- | --- | --- |",
+        ]
+    )
+    unit_rows = (
+        ("body mass (kg)", units.bodyweight_rows_checked, units.bodyweight_kg_mismatches),
+        ("body-mass unit label", units.bodyweight_rows_checked, units.bodyweight_unit_mismatches),
+        (
+            "absent body mass staying absent",
+            units.bodyweight_rows_checked,
+            units.bodyweight_absent_became_zero,
+        ),
+        (
+            "attempt load = abs(source)",
+            units.attempt_rows_checked,
+            units.attempt_load_kg_mismatches,
+        ),
+        (
+            "attempt sign carries only the result",
+            units.attempt_rows_checked,
+            units.attempt_sign_result_mismatches,
+        ),
+        ("attempt unit label", units.attempt_rows_checked, units.attempt_unit_mismatches),
+        (
+            "attempt load strictly positive",
+            units.attempt_rows_checked,
+            units.attempt_loads_not_positive,
+        ),
+        (
+            "reported value = magnitude of source",
+            units.reported_rows_checked,
+            units.reported_value_mismatches,
+        ),
+        (
+            "reported mass unit label",
+            units.reported_mass_rows_checked,
+            units.reported_mass_unit_mismatches,
+        ),
+        (
+            "Best3 semantics preserved",
+            units.reported_best_rows_checked,
+            units.reported_best_semantics_mismatches,
+        ),
+        (
+            "TotalKg unit label",
+            units.reported_totals_checked,
+            units.reported_total_unit_mismatches,
+        ),
+        (
+            "open-ended weight class stays open-ended",
+            units.open_ended_weight_classes,
+            units.open_ended_weight_classes_coerced,
+        ),
+        (
+            "dimensionless scores not read as kg",
+            units.scoring_rows_checked,
+            units.scoring_rows_claiming_a_mass_unit,
+        ),
+    )
+    lines.extend(
+        f"| {label} | {checked:,} | {mismatches:,} |" for label, checked, mismatches in unit_rows
+    )
+    lines.extend(
+        [
+            f"| **all mass fidelity checks combined** | | **{units.mismatch_total:,}** |",
+            "",
+            "### Equipment and federation transitions",
+            "",
+            f"Computed at athlete-meet (`{transitions.grouping}`) and ordered by"
+            f" `{transitions.ordering}`, so several event entries at one meet are never"
+            " read as a longitudinal switch.",
+            "",
+            f"Equipment note: {transitions.equipment_reading}.",
+            "",
+            f"A declared unknown is not a state (`unknown_is_a_state ="
+            f" {str(transitions.unknown_is_a_state).lower()}`): a meet the source left"
+            " silent, and a meet that contradicts itself, are stepped over rather than"
+            " treated as a change.",
+            "",
+            "| field | source column | athlete-meets | with a known state | intra-meet"
+            " conflicts | transitions | identities with transitions |",
+            "| --- | --- | --- | --- | --- | --- | --- |",
+        ]
+    )
+    lines.extend(
+        f"| `{field.field}` | `{field.source_column}` | {field.athlete_meets:,}"
+        f" | {field.athlete_meets_with_a_known_state:,} |"
+        f" {field.intra_meet_state_conflicts:,} | {field.total_transitions:,}"
+        f" | {field.athletes_with_transitions:,} |"
+        for field in transitions.fields
+    )
+    lines.append("")
+    for field in transitions.fields:
+        lines.extend(
+            [
+                f"**{field.field} transitions per identity**",
+                "",
+                _bucket_table(f"{field.field}", field.transitions_per_athlete),
+                "",
+            ]
+        )
+    lines.extend(
+        [
+            "### Classified diagnostic index",
+            "",
+            "| family | finding | class | count |",
+            "| --- | --- | --- | --- |",
+        ]
+    )
+    lines.extend(
+        f"| `{item.family}` | `{item.name}` | `{item.finding_class.value}` | {count} |"
+        for item in diagnostics.findings
+        if (count := "not measurable" if item.count is None else f"{item.count:,}")
+    )
+    lines.append("")
+    return lines
 
 
 def _rule_rows(audit: CorpusAudit) -> list[str]:
@@ -1121,9 +1830,18 @@ def _register(connection: duckdb.DuckDBPyConnection, table: str, path: Path) -> 
         raise AuditError(msg) from error
 
 
-def _scalar(connection: duckdb.DuckDBPyConnection, sql: str) -> int:
-    """Return the single integer *sql* produces."""
-    row = connection.execute(sql).fetchone()
+def _scalar(
+    connection: duckdb.DuckDBPyConnection, sql: str, parameters: Sequence[str] | None = None
+) -> int:
+    """Return the single integer *sql* produces.
+
+    Args:
+        connection: An open pass.
+        sql: One statement returning a single integer.
+        parameters: Values bound through DuckDB's own parameter list rather than
+            interpolated, so a value read out of the corpus can never become SQL.
+    """
+    row = connection.execute(sql, list(parameters) if parameters else None).fetchone()
     if row is None or row[0] is None:
         return 0
     return int(row[0])
@@ -1181,10 +1899,14 @@ def _counts(connection: duckdb.DuckDBPyConnection, sql: str) -> dict[str, int]:
 
 
 def _examples(
-    connection: duckdb.DuckDBPyConnection, sql: str, *, limit: str = _EXAMPLES_LIMIT
+    connection: duckdb.DuckDBPyConnection,
+    sql: str,
+    parameters: Sequence[str] | None = None,
+    *,
+    limit: str = _EXAMPLES_LIMIT,
 ) -> tuple[Mapping[str, object], ...]:
     """Return the first *limit* rows of *sql* as mappings keyed by column name."""
-    cursor = connection.execute(sql)
+    cursor = connection.execute(sql, list(parameters) if parameters else None)
     names = [description[0] for description in cursor.description]
     return tuple(
         {name: (None if value is None else value) for name, value in zip(names, row, strict=True)}
@@ -1769,6 +2491,689 @@ def _anomaly_audit(
 
 
 # --------------------------------------------------------------------------
+# closure diagnostics
+# --------------------------------------------------------------------------
+
+#: The source's ``#N`` disambiguator. Declared once so the base-name derivation and the
+#: disambiguated count cannot disagree about what the suffix looks like.
+_DISAMBIGUATOR_PATTERN: Final[str] = r"#\d+\s*$"
+
+
+def _identity_audit(connection: duckdb.DuckDBPyConnection) -> IdentityStabilityAudit:
+    """Return what the source identity key can and cannot support.
+
+    The only honest answer to "did this lifter change name?" from this source is *that
+    cannot be told*, and it is returned as a structured limitation rather than left as a
+    missing number. Everything else counted here is either a genuine self-contradiction
+    in the source or a measurement of how the source's own ``#N`` mechanism is used.
+    """
+    connection.execute(
+        "CREATE OR REPLACE TEMP TABLE name_keys AS SELECT athlete_id, source_athlete_key,"
+        f" regexp_matches(source_athlete_key, '{_DISAMBIGUATOR_PATTERN}') AS disambiguated,"
+        f" regexp_replace(source_athlete_key, '{_DISAMBIGUATOR_PATTERN}', '') AS base_name"
+        " FROM athlete_source_link WHERE source_athlete_key IS NOT NULL"
+    )
+    connection.execute(
+        "CREATE OR REPLACE TEMP TABLE base_name_groups AS SELECT base_name,"
+        " count(*) AS members,"
+        " count(*) FILTER (WHERE disambiguated) AS disambiguated_members,"
+        " count(*) FILTER (WHERE NOT disambiguated) AS unsuffixed_members"
+        " FROM name_keys GROUP BY base_name HAVING count(*) > 1"
+    )
+    return IdentityStabilityAudit(
+        identities=_scalar(connection, "SELECT count(*) FROM athlete"),
+        names_under_multiple_sex_categories=_scalar(
+            connection, "SELECT count(*) FROM athlete WHERE ambiguity_group_id IS NOT NULL"
+        ),
+        name_keys_mapping_to_several_identities=_scalar(
+            connection,
+            "SELECT count(*) FROM (SELECT source_athlete_key FROM name_keys"
+            " GROUP BY source_athlete_key HAVING count(DISTINCT athlete_id) > 1)",
+        ),
+        identities_mapping_to_several_name_keys=_scalar(
+            connection,
+            "SELECT count(*) FROM (SELECT athlete_id FROM athlete_source_link"
+            " GROUP BY athlete_id HAVING count(DISTINCT source_athlete_key) > 1)",
+        ),
+        disambiguated_names=_scalar(
+            connection, "SELECT count(*) FROM name_keys WHERE disambiguated"
+        ),
+        base_name_collision_groups=_scalar(connection, "SELECT count(*) FROM base_name_groups"),
+        largest_base_name_collision_group=_optional_int(
+            connection, "SELECT max(members) FROM base_name_groups"
+        )
+        or 0,
+        base_name_group_size_distribution=_bucket_counts(
+            connection, table="base_name_groups", column="members", buckets=_BASE_GROUP_BUCKETS
+        ),
+        base_names_also_published_unsuffixed=_scalar(
+            connection, "SELECT count(*) FROM base_name_groups WHERE unsuffixed_members > 0"
+        ),
+        base_name_examples=_examples(
+            connection,
+            "SELECT base_name, members, disambiguated_members, unsuffixed_members,"
+            " list(source_athlete_key ORDER BY source_athlete_key) AS name_keys"
+            " FROM base_name_groups JOIN name_keys USING (base_name)"
+            " GROUP BY base_name, members, disambiguated_members, unsuffixed_members"
+            " ORDER BY members DESC, base_name LIMIT 10",
+        ),
+        limitations=(
+            DiagnosticLimitation(
+                question=NAME_CHANGE_LIMITATION_QUESTION,
+                identifiable=False,
+                reason=NAME_CHANGE_LIMITATION_REASON,
+            ),
+        ),
+    )
+
+
+def _chronology_audit(
+    connection: duckdb.DuckDBPyConnection,
+    *,
+    snapshot_date: str | None,
+    snapshot_date_basis: str,
+) -> ChronologyAudit:
+    """Return the three source-grounded chronology checks.
+
+    Args:
+        connection: An open pass with the canonical tables registered.
+        snapshot_date: The pinned snapshot date as ``YYYY-MM-DD``, or ``None`` when the
+            source stated none. A future-dated comparison is impossible without it, and
+            the report says so rather than comparing against the operator's clock.
+        snapshot_date_basis: Which statement supplied the date, recorded beside it.
+    """
+    future: int | None = None
+    future_meets: int | None = None
+    examples: tuple[Mapping[str, object], ...] = ()
+    if snapshot_date is not None:
+        future = _scalar(
+            connection,
+            "SELECT count(*) FROM competition WHERE competition_date > CAST(? AS TIMESTAMPTZ)",
+            [f"{snapshot_date} 00:00:00+00"],
+        )
+        future_meets = _scalar(
+            connection,
+            "SELECT count(*) FROM competition_meet WHERE meet_date > CAST(? AS TIMESTAMPTZ)",
+            [f"{snapshot_date} 00:00:00+00"],
+        )
+        examples = _examples(
+            connection,
+            "SELECT competition_meet_id,"
+            " strftime(competition_date, '%Y-%m-%dT%H:%M:%SZ') AS competition_date"
+            " FROM competition WHERE competition_date > CAST(? AS TIMESTAMPTZ)"
+            " ORDER BY competition_date DESC, competition_meet_id LIMIT 5",
+            [f"{snapshot_date} 00:00:00+00"],
+        )
+    connection.execute(
+        "CREATE OR REPLACE TEMP TABLE age_observations AS SELECT competition_id, athlete_id,"
+        " competition_date, age_reported, age_precision FROM competition"
+        " WHERE age_reported IS NOT NULL AND competition_date IS NOT NULL"
+    )
+    # ``floor`` rather than a cast: an approximate age is exactly ``n+0.5`` and the rule
+    # below turns that into the single birth year it implies.
+    connection.execute(
+        "CREATE OR REPLACE TEMP TABLE age_pairs AS SELECT athlete_id, competition_id,"
+        " year(competition_date) AS meet_year,"
+        " year(competition_date) - CAST(floor(age_reported) AS BIGINT) AS earlier_birth_year,"
+        " year(competition_date) - CAST(floor(age_reported) AS BIGINT) - 1 AS later_birth_year,"
+        " age_precision = 'exact' AS admits_two_years FROM age_observations"
+    )
+    connection.execute(
+        "CREATE OR REPLACE TEMP TABLE age_sets AS SELECT athlete_id, competition_id, meet_year,"
+        " earlier_birth_year AS birth_year FROM age_pairs UNION ALL SELECT athlete_id,"
+        " competition_id, meet_year, later_birth_year FROM age_pairs WHERE admits_two_years"
+    )
+    connection.execute(
+        "CREATE OR REPLACE TEMP TABLE age_totals AS SELECT athlete_id, count(*) AS observations"
+        " FROM age_observations GROUP BY athlete_id"
+    )
+    # A birth year survives when it is compatible with *every* observation of the identity,
+    # so counting how many observations admit it and comparing against that identity's
+    # total is the intersection, computed by counting rather than by materialising sets.
+    connection.execute(
+        "CREATE OR REPLACE TEMP TABLE age_survivors AS SELECT s.athlete_id, s.birth_year"
+        " FROM age_sets s JOIN age_totals t USING (athlete_id)"
+        " GROUP BY s.athlete_id, s.birth_year, t.observations"
+        " HAVING count(*) = t.observations"
+    )
+    connection.execute(
+        "CREATE OR REPLACE TEMP TABLE age_inconsistent AS SELECT t.athlete_id, t.observations"
+        " FROM age_totals t"
+        " LEFT JOIN (SELECT DISTINCT athlete_id FROM age_survivors) s USING (athlete_id)"
+        " WHERE t.observations > 1 AND s.athlete_id IS NULL"
+    )
+    return ChronologyAudit(
+        pinned_snapshot_date=snapshot_date,
+        pinned_snapshot_date_basis=snapshot_date_basis,
+        future_dated_competitions=future,
+        future_dated_meets=future_meets,
+        future_dated_examples=examples,
+        meets_spanning_multiple_dates=_scalar(
+            connection,
+            "SELECT count(*) FROM (SELECT competition_meet_id FROM competition"
+            " WHERE competition_date IS NOT NULL GROUP BY competition_meet_id"
+            " HAVING count(DISTINCT competition_date) > 1)",
+        ),
+        meet_date_examples=_examples(
+            connection,
+            "SELECT competition_meet_id, count(DISTINCT competition_date) AS distinct_dates,"
+            " min(competition_date) AS first_date, max(competition_date) AS last_date"
+            " FROM competition WHERE competition_date IS NOT NULL GROUP BY competition_meet_id"
+            " HAVING count(DISTINCT competition_date) > 1"
+            " ORDER BY distinct_dates DESC, competition_meet_id LIMIT 5",
+        ),
+        age_observations=_scalar(connection, "SELECT count(*) FROM age_observations"),
+        identities_with_age_observations=_scalar(connection, "SELECT count(*) FROM age_totals"),
+        identities_with_multiple_age_observations=_scalar(
+            connection, "SELECT count(*) FROM age_totals WHERE observations > 1"
+        ),
+        identities_without_a_compatible_birth_year=_scalar(
+            connection, "SELECT count(*) FROM age_inconsistent"
+        ),
+        incompatible_identity_examples=_examples(
+            connection,
+            "SELECT i.athlete_id, a.source_athlete_key, i.observations FROM age_inconsistent i"
+            " JOIN athlete_source_link a USING (athlete_id)"
+            " ORDER BY i.observations DESC, i.athlete_id LIMIT 10",
+        ),
+        age_semantics=(
+            "exact age n at meet year Y admits birth year Y-n or Y-n-1, depending on "
+            "whether the birthday had passed; approximate age n+0.5 is the midpoint of "
+            "that range and admits exactly Y-(n+1); an identity's observations are "
+            "intersected and an empty intersection is reported"
+        ),
+    )
+
+
+def _unit_audit(connection: duckdb.DuckDBPyConnection) -> UnitFidelityAudit:
+    """Return the raw-to-canonical mass fidelity counts.
+
+    Every counter named ``*_mismatches`` is expected to be zero. The tolerance exists
+    only to absorb decimal representation of a copied float: a real unit error is off by
+    a factor, not by the last bit, so nothing legitimate is hidden by it.
+    """
+    tolerance = repr(UNIT_TOLERANCE)
+    mass_kinds = _sql_list(_MASS_RESULT_KINDS)
+    best_kinds = _sql_list(_BEST_RESULT_KINDS)
+    scoring_kinds = _sql_list(
+        tuple(
+            kind
+            for kind, _column, _best in sorted(REPORTED_RESULT_SPECS)
+            if kind not in _MASS_RESULT_KINDS
+        )
+    )
+    bodyweight_kg_mismatches = _scalar(
+        connection,
+        "SELECT count(*) FROM competition WHERE bodyweight_raw IS NOT NULL"
+        f" AND (bodyweight_kg IS NULL OR abs(bodyweight_kg - bodyweight_raw) > {tolerance})",
+    )
+    bodyweight_unit_mismatches = _scalar(
+        connection,
+        "SELECT count(*) FROM competition WHERE bodyweight_raw IS NOT NULL"
+        " AND bodyweight_unit IS DISTINCT FROM 'kg'",
+    )
+    bodyweight_absent_became_zero = _scalar(
+        connection,
+        "SELECT count(*) FROM competition WHERE bodyweight_raw IS NULL AND bodyweight_kg = 0",
+    )
+    attempt_rows = _scalar(connection, "SELECT count(*) FROM competition_attempt")
+    attempt_load_kg_mismatches = _scalar(
+        connection,
+        "SELECT count(*) FROM competition_attempt WHERE load_kg IS NULL"
+        f" OR abs(load_kg - abs(source_attempt_raw)) > {tolerance}"
+        f" OR load_raw IS NULL OR abs(load_kg - load_raw) > {tolerance}",
+    )
+    attempt_sign_result_mismatches = _scalar(
+        connection,
+        "SELECT count(*) FROM competition_attempt WHERE"
+        " (source_attempt_raw > 0) <> (result = 'good_lift')",
+    )
+    attempt_unit_mismatches = _scalar(
+        connection,
+        "SELECT count(*) FROM competition_attempt WHERE load_unit IS DISTINCT FROM 'kg'",
+    )
+    attempt_loads_not_positive = _scalar(
+        connection, "SELECT count(*) FROM competition_attempt WHERE load_kg <= 0"
+    )
+    reported_rows = _scalar(connection, "SELECT count(*) FROM competition_reported_result")
+    reported_value_mismatches = _scalar(
+        connection,
+        "SELECT count(*) FROM competition_reported_result WHERE value IS NULL"
+        " OR source_value_raw IS NULL"
+        f" OR abs(abs(source_value_raw) - value) > {tolerance}",
+    )
+    reported_mass_rows = _scalar(
+        connection,
+        f"SELECT count(*) FROM competition_reported_result WHERE result_kind IN ({mass_kinds})",
+    )
+    reported_mass_unit_mismatches = _scalar(
+        connection,
+        f"SELECT count(*) FROM competition_reported_result WHERE result_kind IN ({mass_kinds})"
+        " AND unit IS DISTINCT FROM 'kg'",
+    )
+    reported_best_rows = _scalar(
+        connection,
+        f"SELECT count(*) FROM competition_reported_result WHERE result_kind IN ({best_kinds})",
+    )
+    reported_best_semantics_mismatches = _scalar(
+        connection,
+        f"SELECT count(*) FROM competition_reported_result WHERE result_kind IN ({best_kinds})"
+        " AND ((source_value_raw < 0) <> (reported_best_semantics = 'failed_attempt_only'))",
+    )
+    reported_totals = _scalar(
+        connection,
+        "SELECT count(*) FROM competition_reported_result WHERE result_kind ="
+        f" '{_TOTAL_RESULT_KIND}'",
+    )
+    reported_total_unit_mismatches = _scalar(
+        connection,
+        "SELECT count(*) FROM competition_reported_result"
+        f" WHERE result_kind = '{_TOTAL_RESULT_KIND}' AND unit IS DISTINCT FROM 'kg'",
+    )
+    open_ended = _scalar(
+        connection,
+        "SELECT count(*) FROM competition WHERE regexp_matches(weight_class_raw, "
+        f"'{OPEN_ENDED_WEIGHT_CLASS_PATTERN}')",
+    )
+    # The label is persisted verbatim and no numeric weight-class column exists, so a
+    # coercion could only appear as an open-ended label that lost its ``+``.
+    open_ended_coerced = _scalar(
+        connection,
+        "SELECT count(*) FROM competition WHERE regexp_matches(weight_class_raw, "
+        f"'{OPEN_ENDED_WEIGHT_CLASS_PATTERN}') AND NOT contains(weight_class_raw, '+')",
+    )
+    scoring_rows = _scalar(
+        connection,
+        f"SELECT count(*) FROM competition_reported_result WHERE result_kind IN ({scoring_kinds})",
+    )
+    scoring_rows_claiming_mass = _scalar(
+        connection,
+        f"SELECT count(*) FROM competition_reported_result WHERE result_kind IN ({scoring_kinds})"
+        " AND unit = 'kg'",
+    )
+    return UnitFidelityAudit(
+        declared_source_unit="kilograms",
+        mass_source_fields=MASS_SOURCE_FIELDS,
+        bodyweight_rows_checked=_scalar(
+            connection, "SELECT count(*) FROM competition WHERE bodyweight_raw IS NOT NULL"
+        ),
+        bodyweight_kg_mismatches=bodyweight_kg_mismatches,
+        bodyweight_unit_mismatches=bodyweight_unit_mismatches,
+        bodyweight_absent_became_zero=bodyweight_absent_became_zero,
+        attempt_rows_checked=attempt_rows,
+        attempt_load_kg_mismatches=attempt_load_kg_mismatches,
+        attempt_sign_result_mismatches=attempt_sign_result_mismatches,
+        attempt_unit_mismatches=attempt_unit_mismatches,
+        attempt_loads_not_positive=attempt_loads_not_positive,
+        reported_rows_checked=reported_rows,
+        reported_value_mismatches=reported_value_mismatches,
+        reported_mass_rows_checked=reported_mass_rows,
+        reported_mass_unit_mismatches=reported_mass_unit_mismatches,
+        reported_best_rows_checked=reported_best_rows,
+        reported_best_semantics_mismatches=reported_best_semantics_mismatches,
+        reported_totals_checked=reported_totals,
+        reported_total_unit_mismatches=reported_total_unit_mismatches,
+        open_ended_weight_classes=open_ended,
+        open_ended_weight_classes_coerced=open_ended_coerced,
+        scoring_rows_checked=scoring_rows,
+        scoring_rows_claiming_a_mass_unit=scoring_rows_claiming_mass,
+        mismatch_total=(
+            bodyweight_kg_mismatches
+            + bodyweight_unit_mismatches
+            + bodyweight_absent_became_zero
+            + attempt_load_kg_mismatches
+            + attempt_sign_result_mismatches
+            + attempt_unit_mismatches
+            + attempt_loads_not_positive
+            + reported_value_mismatches
+            + reported_mass_unit_mismatches
+            + reported_best_semantics_mismatches
+            + reported_total_unit_mismatches
+            + open_ended_coerced
+            + scoring_rows_claiming_mass
+        ),
+    )
+
+
+#: The longitudinal state fields worth tracking, as ``(canonical column, source column)``.
+#: Equipment is first because it is the field a reader most often mistakes for a gear
+#: observation; federation and parent federation follow because a lifter's sanctioning
+#: body is a fact about the meet, not about the person.
+_TRANSITION_FIELDS: Final[tuple[tuple[str, str], ...]] = (
+    ("equipment_class", "Equipment"),
+    ("federation", "Federation"),
+    ("sanctioning_body", "ParentFederation"),
+)
+
+
+def _transition_audit(connection: duckdb.DuckDBPyConnection) -> TransitionAudit:
+    """Return per-athlete-meet equipment and federation transitions.
+
+    One pass builds the athlete-meet state for every tracked field, and the ordering is
+    resolved once. ``lag(... IGNORE NULLS`` is what makes the ordering honest: a meet the
+    source left silent, and a meet that contradicts itself, both carry a null state and so
+    are stepped over rather than treated as a change of state.
+    """
+    known: dict[str, str] = {
+        column: (
+            f"CASE WHEN {column} <> '{_UNKNOWN_EQUIPMENT_CLASS}' THEN {column} END"
+            if column == "equipment_class"
+            else column
+        )
+        for column, _source in _TRANSITION_FIELDS
+    }
+    values = ", ".join(
+        f"count(DISTINCT CASE WHEN {known[column]} IS NOT NULL THEN {column} END)"
+        f" AS {column}_values"
+        for column, _source in _TRANSITION_FIELDS
+    )
+    states = ", ".join(
+        f"min(CASE WHEN {known[column]} IS NOT NULL THEN {column} END) AS {column}_candidate"
+        for column, _source in _TRANSITION_FIELDS
+    )
+    connection.execute(
+        "CREATE OR REPLACE TEMP TABLE athlete_meet_state AS SELECT athlete_id,"
+        " competition_meet_id, min(competition_date) AS competition_date,"
+        f" {values}, {states} FROM competition"
+        " GROUP BY athlete_id, competition_meet_id"
+    )
+    resolved = ", ".join(
+        f"CASE WHEN {column}_values = 1 THEN {column}_candidate END AS {column}_state"
+        for column, _source in _TRANSITION_FIELDS
+    )
+    previous = ", ".join(
+        f"lag({column}_state IGNORE NULLS) OVER w AS {column}_previous"
+        for column, _source in _TRANSITION_FIELDS
+    )
+    connection.execute(
+        f"CREATE OR REPLACE TEMP TABLE athlete_meet_sequence AS SELECT *, {previous}"
+        " FROM (SELECT *, " + resolved + " FROM athlete_meet_state)"
+        " WINDOW w AS (PARTITION BY athlete_id"
+        " ORDER BY competition_date NULLS LAST, competition_meet_id)"
+    )
+    athlete_meets = _scalar(connection, "SELECT count(*) FROM athlete_meet_state")
+    entries: list[TransitionFieldAudit] = []
+    for column, source in _TRANSITION_FIELDS:
+        connection.execute(
+            "CREATE OR REPLACE TEMP TABLE athlete_transitions AS SELECT athlete_id,"
+            f" count(*) FILTER (WHERE {column}_state IS NOT NULL"
+            f" AND {column}_previous IS NOT NULL"
+            f" AND {column}_state <> {column}_previous) AS transitions"
+            " FROM athlete_meet_sequence GROUP BY athlete_id"
+        )
+        entries.append(
+            TransitionFieldAudit(
+                field=column,
+                source_column=source,
+                athlete_meets=athlete_meets,
+                athlete_meets_with_a_known_state=_scalar(
+                    connection,
+                    f"SELECT count(*) FROM athlete_meet_sequence WHERE {column}_values = 1",
+                ),
+                intra_meet_state_conflicts=_scalar(
+                    connection,
+                    f"SELECT count(*) FROM athlete_meet_state WHERE {column}_values > 1",
+                ),
+                total_transitions=_scalar(
+                    connection, "SELECT coalesce(sum(transitions), 0) FROM athlete_transitions"
+                ),
+                athletes_with_transitions=_scalar(
+                    connection, "SELECT count(*) FROM athlete_transitions WHERE transitions > 0"
+                ),
+                transitions_per_athlete=_bucket_counts(
+                    connection,
+                    table="athlete_transitions",
+                    column="transitions",
+                    buckets=_TRANSITION_BUCKETS,
+                ),
+            )
+        )
+    return TransitionAudit(fields=tuple(entries))
+
+
+_FINDING_CLASS_MEANINGS: Final[tuple[FindingClassMeaning, ...]] = (
+    FindingClassMeaning(
+        finding_class=FindingClass.SOURCE_ANOMALY,
+        meaning=(
+            "the pinned source published something unusual, observed in the corpus and "
+            "reported verbatim"
+        ),
+        treatment=(
+            "reported, never repaired: repairing it would make the corpus unable to be "
+            "distinguished from one built over a source with no anomalies"
+        ),
+    ),
+    FindingClassMeaning(
+        finding_class=FindingClass.TRANSFORMATION_INVARIANT_FAILURE,
+        meaning="the transform broke a contract it declared",
+        treatment=(
+            "expected to be zero; a non-zero count is a defect in PSD and not a fact "
+            "about the source"
+        ),
+    ),
+    FindingClassMeaning(
+        finding_class=FindingClass.DESCRIPTIVE_LONGITUDINAL_TRANSITION,
+        meaning=(
+            "a value changed between two meets in one lifter's competition history, which "
+            "is ordinary rather than wrong"
+        ),
+        treatment="reported as a count; never acted on, flagged, or resolved",
+    ),
+    FindingClassMeaning(
+        finding_class=FindingClass.SOURCE_LIMITATION,
+        meaning=("a question this source cannot answer at all, so no count of it is possible"),
+        treatment=(
+            "stated as an explicit limitation; the silence must never be read as a clean result"
+        ),
+    ),
+)
+
+
+def _diagnostic_findings(
+    identity: IdentityStabilityAudit,
+    chronology: ChronologyAudit,
+    units: UnitFidelityAudit,
+    transitions: TransitionAudit,
+) -> tuple[DiagnosticFinding, ...]:
+    """Return the classified index over the four diagnostic sections.
+
+    Built from the sections themselves rather than declared alongside them, so a new
+    count cannot be added to a section and then be missing from the index a consumer
+    filters on.
+
+    Returns:
+        One :class:`DiagnosticFinding` per reported count, families in order.
+    """
+    findings: list[DiagnosticFinding] = []
+
+    def add(
+        family: str,
+        finding_class: FindingClass,
+        name: str,
+        count: int | None,
+        statement: str,
+    ) -> None:
+        findings.append(
+            DiagnosticFinding(
+                family=family,
+                name=name,
+                finding_class=finding_class,
+                count=count,
+                statement=statement,
+            )
+        )
+
+    identity_class = FindingClass.SOURCE_LIMITATION
+    for name, count, statement in (
+        (
+            "names_under_multiple_sex_categories",
+            identity.names_under_multiple_sex_categories,
+            "exact source Name keys the source publishes under more than one reported sex category",
+        ),
+        (
+            "name_keys_mapping_to_several_identities",
+            identity.name_keys_mapping_to_several_identities,
+            "source name keys that produced more than one canonical identity",
+        ),
+        (
+            "identities_mapping_to_several_name_keys",
+            identity.identities_mapping_to_several_name_keys,
+            "canonical identities carrying more than one source name key",
+        ),
+        (
+            "disambiguated_names",
+            identity.disambiguated_names,
+            "source name keys carrying the source's trailing #N disambiguator",
+        ),
+        (
+            "base_name_collision_groups",
+            identity.base_name_collision_groups,
+            "base names shared by more than one source name key",
+        ),
+        (
+            "base_names_also_published_unsuffixed",
+            identity.base_names_also_published_unsuffixed,
+            "collision groups where the bare base name is itself a separate published identity",
+        ),
+    ):
+        add("identity", identity_class, name, count, statement)
+    for limitation in identity.limitations:
+        add(
+            "identity",
+            identity_class,
+            f"limitation:{limitation.question}",
+            0,
+            f"not identifiable: {limitation.reason}",
+        )
+
+    for name, count, statement in (
+        (
+            "future_dated_competitions",
+            chronology.future_dated_competitions,
+            "participations dated after the pinned snapshot date",
+        ),
+        (
+            "future_dated_meets",
+            chronology.future_dated_meets,
+            "meet identities dated after the pinned snapshot date",
+        ),
+        (
+            "meets_spanning_multiple_dates",
+            chronology.meets_spanning_multiple_dates,
+            "meet identities carrying more than one distinct source date",
+        ),
+        (
+            "identities_without_a_compatible_birth_year",
+            chronology.identities_without_a_compatible_birth_year,
+            "source identities whose age observations admit no common birth year",
+        ),
+    ):
+        add("chronology", FindingClass.SOURCE_ANOMALY, name, count, statement)
+
+    transition_class = FindingClass.DESCRIPTIVE_LONGITUDINAL_TRANSITION
+    for field in transitions.fields:
+        add(
+            "transitions",
+            transition_class,
+            f"{field.field}_intra_meet_state_conflicts",
+            field.intra_meet_state_conflicts,
+            f"athlete-meets where the source stated more than one {field.source_column}",
+        )
+        add(
+            "transitions",
+            transition_class,
+            f"{field.field}_total_transitions",
+            field.total_transitions,
+            f"changes between consecutive known athlete-meet {field.source_column} values",
+        )
+        add(
+            "transitions",
+            transition_class,
+            f"{field.field}_athletes_with_transitions",
+            field.athletes_with_transitions,
+            f"source identities with at least one {field.source_column} change",
+        )
+
+    fidelity_class = FindingClass.TRANSFORMATION_INVARIANT_FAILURE
+    for name in _UNIT_MISMATCH_COUNTERS:
+        add(
+            "units",
+            fidelity_class,
+            name,
+            getattr(units, name),
+            f"raw-to-canonical mass fidelity: {name}",
+        )
+    add(
+        "units",
+        fidelity_class,
+        "mass_fidelity_mismatches",
+        units.mismatch_total,
+        "every raw-to-canonical mass fidelity check combined, which a correct transform"
+        " reports as zero",
+    )
+    return tuple(findings)
+
+
+#: The unit counters that must be zero for a correct transform, named once so the audit
+#: computes them, totals them, and reports them through one list.
+_UNIT_MISMATCH_COUNTERS: Final[tuple[str, ...]] = (
+    "bodyweight_kg_mismatches",
+    "bodyweight_unit_mismatches",
+    "bodyweight_absent_became_zero",
+    "attempt_load_kg_mismatches",
+    "attempt_sign_result_mismatches",
+    "attempt_unit_mismatches",
+    "attempt_loads_not_positive",
+    "reported_value_mismatches",
+    "reported_mass_unit_mismatches",
+    "reported_best_semantics_mismatches",
+    "reported_total_unit_mismatches",
+    "open_ended_weight_classes_coerced",
+    "scoring_rows_claiming_a_mass_unit",
+)
+
+
+def _diagnostics_audit(
+    connection: duckdb.DuckDBPyConnection, *, snapshot: OpenPowerliftingSnapshot | None
+) -> DiagnosticsAudit:
+    """Return all four closure diagnostic families and the classification index."""
+    identity = _identity_audit(connection)
+    snapshot_date, snapshot_date_basis = _snapshot_date(snapshot)
+    chronology = _chronology_audit(
+        connection,
+        snapshot_date=snapshot_date,
+        snapshot_date_basis=snapshot_date_basis,
+    )
+    units = _unit_audit(connection)
+    transitions = _transition_audit(connection)
+    return DiagnosticsAudit(
+        identity=identity,
+        chronology=chronology,
+        units=units,
+        transitions=transitions,
+        finding_classes=_FINDING_CLASS_MEANINGS,
+        findings=_diagnostic_findings(identity, chronology, units, transitions),
+    )
+
+
+def _snapshot_date(snapshot: OpenPowerliftingSnapshot | None) -> tuple[str | None, str]:
+    """Return the snapshot date to measure chronology against, and which statement gave it.
+
+    The service page's own statement is preferred over the archive member name because it
+    describes the snapshot the service considers current; both are kept by the snapshot
+    model and either may be absent, and an absent date means the future-dated check
+    cannot run rather than that it found nothing.
+    """
+    if snapshot is None:
+        return None, SNAPSHOT_DATE_BASIS_UNAVAILABLE
+    if snapshot.service.updated_date is not None:
+        return snapshot.service.updated_date, SNAPSHOT_DATE_BASIS_SERVICE
+    if snapshot.service.archive_declared_date is not None:
+        return snapshot.service.archive_declared_date, SNAPSHOT_DATE_BASIS_ARCHIVE
+    return None, SNAPSHOT_DATE_BASIS_UNAVAILABLE
+
+
+# --------------------------------------------------------------------------
 # expansion invariants
 # --------------------------------------------------------------------------
 
@@ -2026,6 +3431,7 @@ def audit_corpus(request: AuditRequest) -> AuditResult:
         context = _athlete_context_audit(connection, entities.competitions)
         review = review_source_schema(source.header)
         anomalies = _anomaly_audit(connection, review)
+        diagnostics = _diagnostics_audit(connection, snapshot=snapshot)
         invariants = expansion_invariants(connection)
     finally:
         connection.close()
@@ -2049,6 +3455,7 @@ def audit_corpus(request: AuditRequest) -> AuditResult:
             rules=EXPANSION_RULES,
             invariants=tuple(item.to_dict() for item in invariants),
         ),
+        diagnostics=diagnostics,
         generated_at=generated,
     )
     json_path, markdown_path = _persist(request, audit)
