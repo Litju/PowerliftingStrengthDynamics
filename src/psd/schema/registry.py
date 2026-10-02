@@ -12,7 +12,8 @@ rows can compare equal. DuckDB and SQL do not guarantee row order without
 Category labels mirror the four semantic separations PSD requires:
 
 ``context``
-    athlete identity, body measurements, equipment state.
+    athlete identity, body measurements, equipment state, and the meets
+    competitions took place in.
 ``semantics``
     exercise definitions, source aliases, and normalization outcomes.
 ``programming``
@@ -43,6 +44,7 @@ from psd.schema.models import (
     AthleteSourceLinkRecord,
     BodyMeasurementRecord,
     CompetitionAttemptRecord,
+    CompetitionMeetRecord,
     CompetitionRecord,
     CompetitionReportedResultRecord,
     EquipmentStateRecord,
@@ -120,6 +122,7 @@ _TEMPORAL_BY_MODEL: dict[str, tuple[str, ...]] = {
     AthleteSourceLinkRecord.__name__: _CONTEXT_TEMPORAL,
     BodyMeasurementRecord.__name__: _CONTEXT_TEMPORAL,
     EquipmentStateRecord.__name__: _CONTEXT_TEMPORAL,
+    CompetitionMeetRecord.__name__: _CONTEXT_TEMPORAL,
     ExerciseDefinitionRecord.__name__: _SEMANTICS_TEMPORAL,
     ExerciseAliasRecord.__name__: _SEMANTICS_TEMPORAL,
     ExerciseNormalizationRecord.__name__: _SEMANTICS_TEMPORAL,
@@ -719,14 +722,41 @@ TABLE_SPECS: tuple[TableSpec, ...] = (
         summary="Bar-velocity measurements with instrument context.",
     ),
     TableSpec(
+        name="competition_meet",
+        model=CompetitionMeetRecord,
+        columns=_columns(
+            CompetitionMeetRecord,
+            "competition_meet_id",
+            "meet_name",
+            "meet_date",
+            "event_time_precision",
+            "meet_federation",
+            "meet_parent_federation",
+            "meet_country",
+            "meet_state",
+            "sanctioned_status_raw",
+            "is_sanctioned",
+            "created_at",
+        ),
+        primary_key=("competition_meet_id",),
+        order_by=("meet_date", "meet_federation", "meet_name", "competition_meet_id"),
+        category="context",
+        summary=(
+            "A competition as a meet: start date, hosting and sanctioning bodies, "
+            "location, and sanctioned status. Distinct from the per-athlete outcome."
+        ),
+    ),
+    TableSpec(
         name="competition",
         model=CompetitionRecord,
         columns=_columns(
             CompetitionRecord,
             "competition_id",
             "athlete_id",
+            "competition_meet_id",
             "competition_date",
             "event_time_precision",
+            "competition_event",
             "name",
             "federation",
             "sanctioning_body",
@@ -738,12 +768,26 @@ TABLE_SPECS: tuple[TableSpec, ...] = (
             "bodyweight_unit",
             "bodyweight_kg",
             "participation_status",
+            "participation_place",
+            "participation_status_kind",
+            "is_drug_tested_category",
+            "age_reported",
+            "age_precision",
+            "age_class_raw",
+            "birth_year_class_raw",
+            "division_raw",
+            "athlete_country_raw",
+            "athlete_region_raw",
             "is_championship",
         ),
         primary_key=("competition_id",),
         order_by=("athlete_id", "competition_date", "competition_id"),
         category="competition",
-        summary="Competitions attended, with equipment and weight-class context.",
+        summary=(
+            "One athlete's result at one meet, with equipment category, weight class, "
+            "body mass, age and its precision, participation status, and drug-tested "
+            "category coverage."
+        ),
     ),
     TableSpec(
         name="competition_attempt",
@@ -755,8 +799,10 @@ TABLE_SPECS: tuple[TableSpec, ...] = (
             "athlete_id",
             "lift",
             "attempt_number",
+            "attempt_role",
             "attempt_order_basis",
             "attempt_time",
+            "source_attempt_raw",
             "load_raw",
             "load_unit",
             "load_kg",
@@ -766,7 +812,11 @@ TABLE_SPECS: tuple[TableSpec, ...] = (
         primary_key=("competition_attempt_id",),
         order_by=("competition_id", "lift", "attempt_number", "competition_attempt_id"),
         category="competition",
-        summary="Individual competition attempts; missing attempts stay missing.",
+        summary=(
+            "Individual competition attempts; missing attempts stay missing. The "
+            "signed source value is preserved beside the positive attempted load, and "
+            "a record fourth attempt is distinguishable from the three counted ones."
+        ),
     ),
     TableSpec(
         name="competition_reported_result",
@@ -779,13 +829,19 @@ TABLE_SPECS: tuple[TableSpec, ...] = (
             "result_kind",
             "value",
             "unit",
+            "source_value_raw",
+            "result_source_field",
+            "reported_best_semantics",
             "is_derived",
             "derivation_note",
         ),
         primary_key=("competition_reported_result_id",),
         order_by=("competition_id", "result_kind", "competition_reported_result_id"),
         category="competition",
-        summary="Reported or derived bests and totals, flagged as derived.",
+        summary=(
+            "Reported or derived bests, totals, and scoring-system points, flagged as "
+            "derived and carrying the source field and signed value they came from."
+        ),
     ),
 )
 

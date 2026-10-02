@@ -15,8 +15,11 @@ PSD data contract at the level of relationships between records:
 * **provenance integrity** -- an edit flag without a modification timestamp, or a
   row citing an unregistered source;
 * **physical consistency** -- equipment and program-version intervals do not
-  overlap, reported totals match reported bests, RPE and RIR do not contradict
-  each other.
+      overlap, reported totals match reported bests, RPE and RIR do not contradict
+      each other.
+* **competition structure** -- an attempt is a lift the declared event contests, the
+      meet facts repeated on a competition row agree with the meet record, and a
+      reported best states whether it is a successful lift or a failed opener.
 
 Every rule reports a :class:`~psd.validation.issues.ValidationIssue` rather than
 raising, so an artifact is described in full in a single pass.
@@ -30,8 +33,15 @@ from datetime import datetime
 from itertools import pairwise
 from typing import Any, Final
 
+from psd.schema.models import LIFTS_BY_COMPETITION_EVENT
 from psd.schema.registry import table_spec
-from psd.schema.vocabulary import AttemptResult, MissingnessReason, QualityFlag
+from psd.schema.vocabulary import (
+    AttemptResult,
+    CompetitionEvent,
+    MissingnessReason,
+    QualityFlag,
+    ReportedBestSemantics,
+)
 from psd.validation.issues import Severity, ValidationIssue
 
 __all__ = ("Index", "Row", "TableRows", "all_issues", "build_index", "record_id")
@@ -72,6 +82,13 @@ _FOREIGN_KEYS: tuple[_ForeignKey, ...] = (
         "dangling_velocity_athlete", "velocity_observation", "athlete_id", "athlete", "athlete_id"
     ),
     _ForeignKey("dangling_competition", "competition", "athlete_id", "athlete", "athlete_id"),
+    _ForeignKey(
+        "dangling_meet",
+        "competition",
+        "competition_meet_id",
+        "competition_meet",
+        "competition_meet_id",
+    ),
     _ForeignKey("dangling_athlete", "competition_attempt", "athlete_id", "athlete", "athlete_id"),
     _ForeignKey(
         "dangling_competition",
@@ -554,6 +571,123 @@ def check_attempt_sequence(tables: TableRows) -> list[ValidationIssue]:
     return issues
 
 
+def check_attempts_belong_to_the_declared_event(tables: TableRows) -> list[ValidationIssue]:
+    """Check every attempt is a lift the lifter's declared event actually contests.
+
+    A reduced event such as ``B`` or ``BD`` means the other lifts were never
+    contested. An attempt on a lift outside the event is therefore a contradiction
+    between two records of the same meet: either the event is wrong or the attempt
+    is. This is the rule that keeps "did not attempt it" and "attempted it and
+    failed" from being confused for one another downstream.
+    """
+    events = build_index(tables, "competition", "competition_id")
+    issues: list[ValidationIssue] = []
+    for row in tables.get("competition_attempt", ()):
+        competition = events.get(row.get("competition_id"))
+        if competition is None:
+            continue
+        event = competition.get("competition_event")
+        if event is None:
+            continue
+        try:
+            declared = CompetitionEvent(str(event))
+        except ValueError:
+            continue
+        lift = str(row.get("lift"))
+        if lift in LIFTS_BY_COMPETITION_EVENT[declared]:
+            continue
+        issues.append(
+            ValidationIssue(
+                code="attempt_outside_declared_event",
+                severity=Severity.ERROR,
+                table="competition_attempt",
+                record_id=record_id("competition_attempt", row),
+                message=(
+                    f"lift {lift!r} is not contested by event {declared.value!r}; a lift "
+                    "outside the declared event was never attempted, so this row must be a "
+                    "data error in one of the two records"
+                ),
+            )
+        )
+    return issues
+
+
+def check_meet_fields_agree_with_the_referenced_meet(tables: TableRows) -> list[ValidationIssue]:
+    """Check the denormalized meet facts on ``competition`` match the meet record.
+
+    A competition row repeats a few meet-level fields so it can be read without a
+    join. That is a denormalization, and a denormalization is only safe if the two
+    copies are checked against each other; a disagreement means one of them is wrong,
+    and PSD will not pick a winner silently.
+    """
+    meets = build_index(tables, "competition_meet", "competition_meet_id")
+    issues: list[ValidationIssue] = []
+    pairs = (
+        ("name", "meet_name"),
+        ("federation", "meet_federation"),
+        ("sanctioning_body", "meet_parent_federation"),
+    )
+    for row in tables.get("competition", ()):
+        meet = meets.get(row.get("competition_meet_id"))
+        if meet is None:
+            continue
+        for competition_column, meet_column in pairs:
+            left = row.get(competition_column)
+            right = meet.get(meet_column)
+            if left == right:
+                continue
+            issues.append(
+                ValidationIssue(
+                    code="meet_field_disagreement",
+                    severity=Severity.ERROR,
+                    table="competition",
+                    record_id=record_id("competition", row),
+                    message=(
+                        f"{competition_column}={left!r} disagrees with "
+                        f"competition_meet.{meet_column}={right!r} for meet "
+                        f"{row.get('competition_meet_id')!r}; the duplicated meet facts must "
+                        "not tell two different stories"
+                    ),
+                )
+            )
+    return issues
+
+
+def check_reported_best_semantics(tables: TableRows) -> list[ValidationIssue]:
+    """Check a negative reported best declares that it is a failed opener.
+
+    A handful of federations publish a negative best to mean "lowest weight attempted
+    and failed". A row carrying that sign without saying so is unreadable: any
+    consumer has to guess whether it is a failed opener or a corrupt positive. The
+    per-record contract already rejects the contradiction; this rule keeps the
+    persisted column honest even when an artifact is written outside the contract.
+    """
+    failed_only = ReportedBestSemantics.FAILED_ATTEMPT_ONLY.value
+    issues: list[ValidationIssue] = []
+    for row in tables.get("competition_reported_result", ()):
+        if str(row.get("result_kind")) not in _REPORTED_LIFT_KINDS:
+            continue
+        raw = row.get("source_value_raw")
+        if not isinstance(raw, (int, float)) or isinstance(raw, bool):
+            continue
+        if float(raw) >= 0.0 or row.get("reported_best_semantics") in (None, failed_only):
+            continue
+        issues.append(
+            ValidationIssue(
+                code="reported_best_semantics_mismatch",
+                severity=Severity.ERROR,
+                table="competition_reported_result",
+                record_id=record_id("competition_reported_result", row),
+                message=(
+                    f"source_value_raw={raw!r} is negative, so the reported best is the "
+                    f"lowest failed weight; reported_best_semantics="
+                    f"{row.get('reported_best_semantics')!r} says otherwise"
+                ),
+            )
+        )
+    return issues
+
+
 def check_reported_totals(tables: TableRows) -> list[ValidationIssue]:
     """Check reported totals against reported bests.
 
@@ -848,6 +982,9 @@ def all_issues(tables: TableRows) -> list[ValidationIssue]:
         check_edit_provenance,
         check_interval_overlaps,
         check_attempt_sequence,
+        check_attempts_belong_to_the_declared_event,
+        check_meet_fields_agree_with_the_referenced_meet,
+        check_reported_best_semantics,
         check_reported_totals,
         check_plan_execution_consistency,
         check_duplicate_measurements,

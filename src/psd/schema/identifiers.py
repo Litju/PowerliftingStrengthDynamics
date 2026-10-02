@@ -78,6 +78,7 @@ class IdPrefix(StrEnum):
     PERFORMANCE_TEST = "ptest"
     VELOCITY_OBSERVATION = "vel"
     COMPETITION = "cmp"
+    COMPETITION_MEET = "cmeet"
     COMPETITION_ATTEMPT = "catt"
     COMPETITION_REPORTED_RESULT = "cres"
 

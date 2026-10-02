@@ -32,13 +32,16 @@ from psd.schema.base import (
     normalize_timestamp,
 )
 from psd.schema.vocabulary import (
+    AgePrecision,
     AmbiguityReason,
     AttemptOrderBasis,
     AttemptResult,
+    AttemptRole,
     BarType,
     BodyMassContext,
     BodyMeasurementMethod,
     BodyMeasurementType,
+    CompetitionEvent,
     CompetitionResultKind,
     ConfigurationFlag,
     EquipmentClass,
@@ -57,10 +60,12 @@ from psd.schema.vocabulary import (
     ObservationScope,
     ObservationType,
     ParentLift,
+    ParticipationStatus,
     PauseRule,
     PrescriptionBasis,
     ProgramModificationKind,
     RangeOfMotion,
+    ReportedBestSemantics,
     ReporterRole,
     RepStatus,
     ResolutionMethod,
@@ -84,11 +89,14 @@ from psd.units import (
 )
 
 __all__ = (
+    "ORDERED_ATTEMPT_NUMBERS",
+    "RECORD_FOURTH_ATTEMPT_NUMBER",
     "STATUS_BY_RESOLUTION_METHOD",
     "AthleteRecord",
     "AthleteSourceLinkRecord",
     "BodyMeasurementRecord",
     "CompetitionAttemptRecord",
+    "CompetitionMeetRecord",
     "CompetitionRecord",
     "CompetitionReportedResultRecord",
     "EquipmentStateRecord",
@@ -136,6 +144,40 @@ RPE_MAX: Final[float] = 10.0
 PERCENT_MIN: Final[float] = 0.0
 PERCENT_MAX: Final[float] = 100.0
 ATTEMPT_NUMBERS: Final[tuple[int, ...]] = (1, 2, 3)
+
+#: The attempts the competition rules count toward the lift and toward the total.
+ORDERED_ATTEMPT_NUMBERS: Final[tuple[int, ...]] = (1, 2, 3)
+
+#: The one further attempt a ruleset permits, taken solely for a single-lift
+#: record. It is not part of :data:`ORDERED_ATTEMPT_NUMBERS` and contributes to
+#: no total.
+RECORD_FOURTH_ATTEMPT_NUMBER: Final[int] = 4
+
+#: The reported-result kinds whose value is a best lift rather than a total or a
+#: score. Used to require the negative-best semantics to be stated explicitly.
+REPORTED_BEST_KINDS: Final[frozenset[CompetitionResultKind]] = frozenset(
+    {
+        CompetitionResultKind.SQUAT_BEST,
+        CompetitionResultKind.BENCH_BEST,
+        CompetitionResultKind.DEADLIFT_BEST,
+    }
+)
+
+#: ``Event`` codes map onto the lifts a lifter actually attempted. A lift missing
+#: from its event was never attempted, which is a different fact from attempting it
+#: and failing, and the cross-record rules use this to keep the two apart.
+LIFTS_BY_COMPETITION_EVENT: Final[Mapping[CompetitionEvent, frozenset[LiftType]]] = {
+    CompetitionEvent.SQUAT_BENCH_DEADLIFT: frozenset(
+        {LiftType.SQUAT, LiftType.BENCH, LiftType.DEADLIFT}
+    ),
+    CompetitionEvent.BENCH_DEADLIFT: frozenset({LiftType.BENCH, LiftType.DEADLIFT}),
+    CompetitionEvent.SQUAT_DEADLIFT: frozenset({LiftType.SQUAT, LiftType.DEADLIFT}),
+    CompetitionEvent.SQUAT_BENCH: frozenset({LiftType.SQUAT, LiftType.BENCH}),
+    CompetitionEvent.SQUAT: frozenset({LiftType.SQUAT}),
+    CompetitionEvent.BENCH: frozenset({LiftType.BENCH}),
+    CompetitionEvent.DEADLIFT: frozenset({LiftType.DEADLIFT}),
+}
+
 NORMALIZATION_TOLERANCE: Final[float] = 1e-9
 
 #: Pause rules that represent a pause *added* on top of the competition rules of
@@ -1291,13 +1333,95 @@ class VelocityObservationRecord(EventRecord):
 # --------------------------------------------------------------------------
 
 
+class CompetitionMeetRecord(ContextRecord):
+    """One competition, as a meet.
+
+    A meet is context rather than an outcome: it has an identity, a start date, a
+    hosting body, a sanctioning body, and a sanctioned/unsanctioned status, none of
+    which is a thing an athlete performed. The lifter's outcome at that meet lives
+    on :class:`CompetitionRecord`.
+
+    Two source facts drive most of this record's shape, and both are easy to lose:
+
+    * A meet that runs over more than one day publishes only its **start** date, so
+      ``event_time_precision`` is ``DATE_ONLY`` and nothing here claims to know when
+      a particular lifter walked on. Two meets may share a start date; that is a fact
+      about the source, not a defect to be repaired.
+    * A meet is hosted by one body and sanctioned by another. Those are separate
+      fields and stay separate: the hosting federation is frequently an affiliate
+      rather than the top-level sanctioning body.
+
+    ``sanctioned_status_raw`` keeps the source's own wording beside the parsed
+    boolean. "Sanctioned" is the source's competition status; it is not a quality
+    score, and PSD does not rank meets by it.
+    """
+
+    competition_meet_id: str = Field(min_length=1, max_length=160)
+    meet_name: str = Field(min_length=1, max_length=512)
+    #: The meet's start date, as a date-only UTC instant.
+    meet_date: datetime
+    event_time_precision: EventTimePrecision = EventTimePrecision.DATE_ONLY
+    #: The federation that hosted the meet.
+    meet_federation: str = Field(min_length=1, max_length=128)
+    #: The top-level body that sanctioned the meet, when the source states one.
+    meet_parent_federation: str | None = Field(default=None, max_length=128)
+    meet_country: str | None = Field(default=None, max_length=128)
+    meet_state: str | None = Field(default=None, max_length=128)
+    sanctioned_status_raw: str | None = Field(default=None, max_length=64)
+    is_sanctioned: bool | None = None
+
+    @model_validator(mode="after")
+    def _check_consistency(self) -> Self:
+        object.__setattr__(
+            self, "meet_date", normalize_timestamp(self.meet_date, field="meet_date")
+        )
+        if self.is_sanctioned is not None and self.sanctioned_status_raw is None:
+            msg = (
+                "competition_meet: a parsed is_sanctioned requires sanctioned_status_raw, so a "
+                "reader can see the source's own wording rather than only PSD's reading of it"
+            )
+            raise ValueError(msg)
+        return self
+
+
 class CompetitionRecord(EventRecord):
-    """A competition an athlete attended."""
+    """One athlete's result at one competition.
+
+    Everything here is what the *source recorded about this lifter at this meet*.
+    Meet-level facts are stated once on :class:`CompetitionMeetRecord`, which
+    ``competition_meet_id`` points at; this record repeats the ones that a reader
+    would otherwise have to join for, and a cross-record rule requires the two
+    views to agree.
+
+    Four columns carry most of the source's meaning and are worth reading together:
+
+    ``equipment_class`` / ``equipment_class_raw``
+        The competition equipment **category**, i.e. the equipment the rules allowed.
+        A lifter in a wrap-free-permitting category may still have competed in
+        knee sleeves, and PSD does not claim they wore anything: no athlete-level
+        equipment observation is derived from this field.
+    ``age_reported`` / ``age_precision``
+        A reported age, with its precision stated. An approximate age is known to
+        lie between two integers; rounding it would invent a precision the source
+        never had, and no birth date or birth year is inferred from it.
+    ``participation_place`` / ``participation_status`` / ``participation_status_kind``
+        The placing, when there is one. Sources also report guest, disqualified,
+        doping-disqualified, and no-show codes, which are *not* placings and are
+        never coerced into numbers.
+    ``is_drug_tested_category``
+        Whether the result belongs to a drug-tested competition category. It says
+        nothing about whether this individual was tested -- federations do not
+        publish which lifters were -- so it is a property of the category, not of
+        the athlete.
+    """
 
     competition_id: str = Field(min_length=1, max_length=160)
     athlete_id: str = Field(min_length=1, max_length=160)
+    competition_meet_id: str | None = Field(default=None, max_length=160)
     competition_date: datetime
     event_time_precision: EventTimePrecision = EventTimePrecision.UNKNOWN
+    #: Which competition event was entered: which lifts were contested at all.
+    competition_event: CompetitionEvent | None = None
     name: str | None = Field(default=None, max_length=512)
     federation: str | None = Field(default=None, max_length=128)
     sanctioning_body: str | None = Field(default=None, max_length=128)
@@ -1308,7 +1432,25 @@ class CompetitionRecord(EventRecord):
     bodyweight_raw: float | None = None
     bodyweight_unit: str | None = Field(default=None, max_length=16)
     bodyweight_kg: float | None = None
+    #: The source's participation code, verbatim, whether numeric or not.
     participation_status: str | None = Field(default=None, max_length=64)
+    #: The numeric placing, present only when the lifter was actually placed.
+    participation_place: int | None = Field(default=None, ge=1)
+    participation_status_kind: ParticipationStatus = ParticipationStatus.UNKNOWN
+    #: Whether the meet sanctioned this result under a drug-tested category.
+    is_drug_tested_category: bool | None = None
+    #: The source-reported age. A half-integer age is approximate, not rounded.
+    age_reported: float | None = None
+    age_precision: AgePrecision | None = None
+    #: The source's explicit age-class label, when it published one.
+    age_class_raw: str | None = Field(default=None, max_length=64)
+    #: The source's birth-year class, a different bucket from the age class.
+    birth_year_class_raw: str | None = Field(default=None, max_length=64)
+    #: Free-form division text. Never mined for an age: dedicated age fields exist.
+    division_raw: str | None = Field(default=None, max_length=256)
+    #: The lifter's own country/state as reported for this result, verbatim.
+    athlete_country_raw: str | None = Field(default=None, max_length=128)
+    athlete_region_raw: str | None = Field(default=None, max_length=128)
     is_championship: bool | None = None
 
     @model_validator(mode="after")
@@ -1324,6 +1466,28 @@ class CompetitionRecord(EventRecord):
             normalized=self.bodyweight_kg,
             prefix="competition.bodyweight",
         )
+        if (self.participation_place is None) != (
+            self.participation_status_kind is not ParticipationStatus.PLACED
+        ):
+            msg = (
+                "competition: participation_place is present exactly when "
+                "participation_status_kind is 'placed'; a guest, disqualified, "
+                "doping-disqualified, or no-show result has no placing to record, and a "
+                "placing that exists without a placed status contradicts itself"
+            )
+            raise ValueError(msg)
+        if (self.age_reported is None) != (self.age_precision is None):
+            msg = (
+                "competition: age_reported and age_precision must be recorded together; an "
+                "age with no stated precision would let an approximation read as exact"
+            )
+            raise ValueError(msg)
+        if self.age_reported is not None and self.age_reported < 0.0:
+            msg = f"competition: age_reported {self.age_reported!r} must not be negative."
+            raise ValueError(msg)
+        if self.weight_class_raw is not None and not self.weight_class_raw.strip():
+            msg = "competition: weight_class_raw must not be padding; use null instead."
+            raise ValueError(msg)
         return self
 
 
@@ -1334,15 +1498,34 @@ class CompetitionAttemptRecord(EventRecord):
     actually recorded. ``NO_ATTEMPT`` exists solely for sources that explicitly
     report an empty attempt slot (for example a withdrawal), and is distinct from
     ``BAD_LIFT``.
+
+    Three columns together carry a source's signed-attempt encoding without ever
+    storing a negative physical load:
+
+    ``source_attempt_raw``
+        The source value verbatim, sign included. Several sources encode success as a
+        positive number and failure as that number negated, so the sign *is* the
+        result and this column is the only place the original encoding survives.
+    ``load_raw`` / ``load_kg``
+        The magnitude that was physically on the bar: ``abs(source_attempt_raw)``, in
+        kilograms. ``-200 kg`` is not a load anybody attempted.
+    ``result``
+        The sign, read as an outcome: ``GOOD_LIFT`` above zero, ``BAD_LIFT`` below.
+
+    ``attempt_role`` separates the three attempts the rules count from a fourth
+    attempt taken only for a single-lift record. A fourth attempt does not contribute
+    to the total, and this contract will not let it be mistaken for one.
     """
 
     competition_attempt_id: str = Field(min_length=1, max_length=160)
     competition_id: str = Field(min_length=1, max_length=160)
     athlete_id: str = Field(min_length=1, max_length=160)
     lift: LiftType
-    attempt_number: int | None = Field(default=None, ge=1, le=3)
+    attempt_number: int | None = Field(default=None, ge=1, le=4)
+    attempt_role: AttemptRole = AttemptRole.ORDERED
     attempt_order_basis: AttemptOrderBasis = AttemptOrderBasis.UNKNOWN
     attempt_time: datetime | None = None
+    source_attempt_raw: float | None = None
     load_raw: float | None = None
     load_unit: str | None = Field(default=None, max_length=16)
     load_kg: float | None = None
@@ -1354,8 +1537,15 @@ class CompetitionAttemptRecord(EventRecord):
         object.__setattr__(
             self, "attempt_time", normalize_timestamp(self.attempt_time, field="attempt_time")
         )
-        if self.attempt_number is not None and self.attempt_number not in ATTEMPT_NUMBERS:
-            msg = f"attempt_number must be one of {ATTEMPT_NUMBERS}; got {self.attempt_number!r}."
+        if self.attempt_number is not None and self.attempt_number not in (
+            *ORDERED_ATTEMPT_NUMBERS,
+            RECORD_FOURTH_ATTEMPT_NUMBER,
+        ):
+            msg = (
+                f"attempt_number must be one of "
+                f"{(*ORDERED_ATTEMPT_NUMBERS, RECORD_FOURTH_ATTEMPT_NUMBER)}; got "
+                f"{self.attempt_number!r}."
+            )
             raise ValueError(msg)
         _validate_mass_triplet(
             raw_value=self.load_raw,
@@ -1363,20 +1553,93 @@ class CompetitionAttemptRecord(EventRecord):
             normalized=self.load_kg,
             prefix="competition_attempt.load",
         )
+        _check_attempt_role(self.attempt_role, self.attempt_number)
         completed = {AttemptResult.GOOD_LIFT, AttemptResult.BAD_LIFT}
         if self.result in completed and self.load_kg is None:
             msg = f"A {self.result.value!r} attempt must record the load that was attempted."
             raise ValueError(msg)
+        _check_signed_attempt(self.source_attempt_raw, self.result, self.load_raw)
         return self
 
 
-class CompetitionReportedResultRecord(EventRecord):
-    """A reported or derived competition result such as a best lift or total.
+def _check_attempt_role(role: AttemptRole, attempt_number: int | None) -> None:
+    """Check the attempt role and the attempt number tell the same story."""
+    if role is AttemptRole.RECORD_FOURTH and attempt_number != RECORD_FOURTH_ATTEMPT_NUMBER:
+        msg = (
+            f"attempt_role='record_fourth' requires attempt_number="
+            f"{RECORD_FOURTH_ATTEMPT_NUMBER}; a record attempt is the fourth, and one "
+            "numbered differently would be indistinguishable from an ordinary attempt"
+        )
+        raise ValueError(msg)
+    if (
+        role is AttemptRole.ORDERED
+        and attempt_number is not None
+        and attempt_number not in ORDERED_ATTEMPT_NUMBERS
+    ):
+        msg = (
+            f"attempt_role='ordered' requires attempt_number in {ORDERED_ATTEMPT_NUMBERS}; "
+            f"only attempt number {RECORD_FOURTH_ATTEMPT_NUMBER} is a record attempt and it "
+            "must be labelled as one"
+        )
+        raise ValueError(msg)
 
-    ``is_derived`` marks values computed by a source or by PSD rather than
-    observed. Reported bests and totals stay separate from the attempt
-    observations they summarize, so a meet best is never mistaken for a measured
-    latent 1RM.
+
+def _check_signed_attempt(
+    source_attempt_raw: float | None, result: AttemptResult, load_raw: float | None
+) -> None:
+    """Check the signed source value and the canonical load agree.
+
+    This check *is* the reason both columns exist. A negative source value must be a
+    bad lift, a positive one a good lift, and the physical load must be its magnitude.
+    A source value of zero is not a load at all and is rejected rather than stored.
+    """
+    if source_attempt_raw is None:
+        return
+    if source_attempt_raw == 0.0:
+        msg = (
+            "competition_attempt: source_attempt_raw is 0.0, which is not a load. A source "
+            "that has no attempt to report leaves the attempt absent; it does not report zero."
+        )
+        raise ValueError(msg)
+    expected = AttemptResult.GOOD_LIFT if source_attempt_raw > 0 else AttemptResult.BAD_LIFT
+    if result in {AttemptResult.GOOD_LIFT, AttemptResult.BAD_LIFT} and result is not expected:
+        msg = (
+            f"source_attempt_raw={source_attempt_raw!r} implies a {expected.value!r} attempt, "
+            f"but result={result.value!r} says otherwise"
+        )
+        raise ValueError(msg)
+    if load_raw is not None and abs(load_raw - abs(source_attempt_raw)) > NORMALIZATION_TOLERANCE:
+        msg = (
+            f"load_raw={load_raw!r} is not the magnitude of source_attempt_raw="
+            f"{source_attempt_raw!r}; the attempted load is abs() of the source value and "
+            "never its signed form"
+        )
+        raise ValueError(msg)
+
+
+class CompetitionReportedResultRecord(EventRecord):
+    """A reported or derived competition result such as a best lift or a total.
+
+    ``is_derived`` marks values computed by a source or by PSD rather than observed.
+    Reported bests and totals stay separate from the attempt observations they
+    summarize, so a meet best is never mistaken for a measured latent 1RM. Nothing
+    here is an estimate of latent capacity.
+
+    Three columns keep the source's own numbers recoverable:
+
+    ``source_value_raw``
+        The value exactly as the source published it, sign and precision included.
+    ``result_source_field``
+        Which source column supplied the value. Several distinct scoring systems share
+        this table and the field name is what tells them apart.
+    ``reported_best_semantics``
+        Required for every best lift, because a *negative* reported best is not a
+        negative lift: a few federations publish the lowest weight a lifter attempted
+        and failed. ``value`` holds the magnitude and this column states which of the
+        two meanings applies, so neither reading can be inferred by accident.
+
+    A source may report a total while omitting the component lifts entirely. PSD
+    records the total it was given and never manufactures components to balance it.
     """
 
     competition_reported_result_id: str = Field(min_length=1, max_length=160)
@@ -1385,5 +1648,66 @@ class CompetitionReportedResultRecord(EventRecord):
     result_kind: CompetitionResultKind
     value: float
     unit: str | None = Field(default=None, max_length=32)
+    source_value_raw: float | None = None
+    result_source_field: str | None = Field(default=None, max_length=64)
+    reported_best_semantics: ReportedBestSemantics | None = None
     is_derived: bool = False
     derivation_note: str | None = Field(default=None, max_length=512)
+
+    @model_validator(mode="after")
+    def _check_consistency(self) -> Self:
+        """Keep the recorded value and the recorded meaning from contradicting.
+
+        The rule is symmetric with attempts: ``value`` is the magnitude and
+        ``source_value_raw`` is the source's signed number. The sign lives only in the
+        raw column, which is what makes "lowest weight attempted and failed"
+        representable without ever storing a negative lift.
+        """
+        if self.source_value_raw == 0.0:
+            msg = "competition_reported_result: source_value_raw 0.0 is not a reported value."
+            raise ValueError(msg)
+        if self.source_value_raw is not None and (
+            abs(abs(self.source_value_raw) - abs(self.value)) > NORMALIZATION_TOLERANCE
+        ):
+            msg = (
+                f"value={self.value!r} is not the magnitude of source_value_raw="
+                f"{self.source_value_raw!r}"
+            )
+            raise ValueError(msg)
+        if self.result_kind in REPORTED_BEST_KINDS:
+            if self.value <= 0.0:
+                msg = (
+                    f"value={self.value!r} must be a positive magnitude; a reported best that "
+                    "the source published with a negative sign is recorded as its magnitude "
+                    "here, with the sign kept in source_value_raw"
+                )
+                raise ValueError(msg)
+            if self.source_value_raw is not None and self.source_value_raw < 0.0:
+                required = ReportedBestSemantics.FAILED_ATTEMPT_ONLY
+                if self.reported_best_semantics is not required:
+                    msg = (
+                        f"source_value_raw={self.source_value_raw!r} is negative, which is how "
+                        "a few federations publish the lowest weight a lifter attempted and "
+                        "failed. Record reported_best_semantics="
+                        f"{required.value!r}, because a negative successful lift does not exist"
+                    )
+                    raise ValueError(msg)
+            if (
+                self.reported_best_semantics is ReportedBestSemantics.FAILED_ATTEMPT_ONLY
+                and self.source_value_raw is not None
+                and self.source_value_raw > 0.0
+            ):
+                msg = (
+                    f"reported_best_semantics='failed_attempt_only' contradicts "
+                    f"source_value_raw={self.source_value_raw!r}: a positive reported best is "
+                    "a successful lift. Only a source that publishes a negative best means the "
+                    "lowest failed weight."
+                )
+                raise ValueError(msg)
+        elif self.reported_best_semantics is not None:
+            msg = (
+                "reported_best_semantics is only meaningful for a reported best lift; "
+                f"result_kind={self.result_kind.value!r} is not one"
+            )
+            raise ValueError(msg)
+        return self

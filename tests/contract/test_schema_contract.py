@@ -54,6 +54,7 @@ def test_registry_covers_every_required_entity() -> None:
         "performance_test",
         "velocity_observation",
         "competition",
+        "competition_meet",
         "competition_attempt",
         "competition_reported_result",
     }
@@ -232,6 +233,59 @@ def test_competition_attempts_and_reported_results_are_distinct() -> None:
     reported = column_order("competition_reported_result")
     assert "is_derived" in reported
     assert "derivation_note" in reported
+
+
+def test_signed_source_values_are_preserved_beside_the_canonical_loads() -> None:
+    """A negative source value must survive verbatim somewhere, or it is lost."""
+    attempts = column_order("competition_attempt")
+    assert "source_attempt_raw" in attempts
+    assert "load_kg" in attempts
+    reported = column_order("competition_reported_result")
+    assert "source_value_raw" in reported
+    assert "reported_best_semantics" in reported
+
+
+def test_a_record_fourth_attempt_is_distinguishable() -> None:
+    """A fourth attempt contributes to no total and must be labelled as such."""
+    assert "attempt_role" in column_order("competition_attempt")
+
+
+def test_a_meet_is_its_own_record_and_not_an_athlete_outcome() -> None:
+    """Meet identity has to survive independently of the results that reference it."""
+    assert "competition" in table_categories()["competition"]
+    assert "competition_meet" in table_categories()["context"]
+    meets = column_order("competition_meet")
+    assert "meet_federation" in meets
+    assert "meet_parent_federation" in meets
+    assert "meet_date" in meets
+    assert "sanctioned_status_raw" in meets
+    assert "competition_meet_id" in column_order("competition")
+
+
+def test_approximate_age_is_not_representable_as_an_exact_one() -> None:
+    """An age and its precision travel together, so neither can be read alone."""
+    competition = column_order("competition")
+    assert "age_reported" in competition
+    assert "age_precision" in competition
+    assert "age_class_raw" in competition
+    assert "birth_year_class_raw" in competition
+    assert "division_raw" in competition
+
+
+def test_non_numeric_participation_codes_have_a_home_of_their_own() -> None:
+    competition = column_order("competition")
+    assert "participation_status" in competition
+    assert "participation_place" in competition
+    assert "participation_status_kind" in competition
+
+
+def test_the_tested_flag_is_named_for_the_category_not_the_athlete() -> None:
+    """`Tested` says the result counts as drug-tested; it says nothing about a person."""
+    column = "is_drug_tested_category"
+    assert column in column_order("competition")
+    assert "is_drug_tested_category" not in column_order("athlete")
+    assert "is_tested" not in column_order("athlete")
+    assert "drug_tested" not in column_order("athlete")
 
 
 def test_unknown_table_raises() -> None:

@@ -30,14 +30,17 @@ from psd.provenance.sources import (
 __all__ = (
     "TEXT_NORMALIZATION_RULES",
     "VOCABULARIES",
+    "AgePrecision",
     "AliasSourceSystem",
     "AmbiguityReason",
     "AttemptOrderBasis",
     "AttemptResult",
+    "AttemptRole",
     "BarType",
     "BodyMassContext",
     "BodyMeasurementMethod",
     "BodyMeasurementType",
+    "CompetitionEvent",
     "CompetitionResultKind",
     "ConfigurationFlag",
     "ConsentBasis",
@@ -58,6 +61,7 @@ __all__ = (
     "ObservationScope",
     "ObservationType",
     "ParentLift",
+    "ParticipationStatus",
     "PauseRule",
     "PrescriptionBasis",
     "ProgramModificationKind",
@@ -66,6 +70,7 @@ __all__ = (
     "RangeOfMotion",
     "RedistributionPolicy",
     "RepStatus",
+    "ReportedBestSemantics",
     "ReporterRole",
     "ResolutionMethod",
     "ResolutionStatus",
@@ -645,6 +650,90 @@ class AttemptOrderBasis(StrEnum):
     UNKNOWN = "unknown"
 
 
+class AttemptRole(StrEnum):
+    """What role an attempt played in the meet.
+
+    This is the distinction a three-attempt model cannot express on its own. The
+    first three attempts of a lift are the ones the rules count; a fourth attempt
+    exists only to attempt a single-lift record, and it **does not contribute to the
+    total**. Without this, a fourth attempt is indistinguishable from an ordinary
+    third attempt and a naive reading of the corpus inflates totals.
+
+    ``RECORD_FOURTH`` is deliberately not modelled as "attempt number 4" alone: the
+    number and the role must agree, and the contract enforces that they do.
+    """
+
+    #: One of the three attempts the rules count toward the lift and the total.
+    ORDERED = "ordered"
+    #: A fourth attempt taken solely for a single-lift record. It counts toward
+    #: nothing.
+    RECORD_FOURTH = "record_fourth"
+
+
+class CompetitionEvent(StrEnum):
+    """Which competition event a result belongs to.
+
+    An event is a *declared* event type, not a description of which lifts happened.
+    A reduced event such as ``B`` or ``BD`` means the lifter never attempted the
+    other lifts, and that is categorically different from attempting them and
+    failing: one is not in the meet, the other is a bad lift.
+    """
+
+    SQUAT_BENCH_DEADLIFT = "sbd"
+    BENCH_DEADLIFT = "bd"
+    SQUAT_DEADLIFT = "sd"
+    SQUAT_BENCH = "sb"
+    SQUAT = "s"
+    BENCH = "b"
+    DEADLIFT = "d"
+
+
+class ParticipationStatus(StrEnum):
+    """How a lifter's participation ended, independent of the placing.
+
+    A source that reports ``DQ``, ``DD``, ``G`` or ``NS`` is not reporting a rank.
+    Coercing those codes to a number would invent a placing nobody earned, so the
+    numeric placing lives in its own nullable column and these codes live here.
+    """
+
+    PLACED = "placed"
+    #: Succeeded, but not eligible for awards.
+    GUEST = "guest"
+    #: Disqualified, possibly for procedural reasons rather than failed lifts.
+    DISQUALIFIED = "disqualified"
+    #: Disqualified by a failed drug test.
+    DRUG_DISQUALIFIED = "drug_disqualified"
+    #: Did not appear on the meet day.
+    NO_SHOW = "no_show"
+    UNKNOWN = "unknown"
+
+
+class AgePrecision(StrEnum):
+    """Whether a reported age is exact or an approximation.
+
+    Some federations publish only a birth year, so the age is known to lie between
+    two integers. Collapsing that into one integer would invent a precision the
+    source did not have, and rounding is exactly as wrong as guessing.
+    """
+
+    EXACT = "exact"
+    APPROXIMATE = "approximate"
+
+
+class ReportedBestSemantics(StrEnum):
+    """What a source-reported best lift actually reports.
+
+    Most reported bests are the best *successful* attempt. A small number of
+    federations instead report the lowest weight the lifter attempted and failed,
+    which the source publishes as a negative best. That is a completely different
+    fact, and reading it as a negative successful lift -- or as a missing value --
+    would both be wrong.
+    """
+
+    SUCCESSFUL_BEST = "successful_best"
+    FAILED_ATTEMPT_ONLY = "failed_attempt_only"
+
+
 class CompetitionResultKind(StrEnum):
     """Reported or derived competition results.
 
@@ -666,14 +755,26 @@ class CompetitionResultKind(StrEnum):
 class EquipmentClass(StrEnum):
     """Normalized equipment class.
 
-    Federations and apps use different vocabularies; the raw value is always
-    preserved alongside the normalized member.
+    This is the **competition equipment category** -- the class the lifts were
+    performed under, and therefore the equipment the rules *allowed*. It is not a
+    statement that the athlete wore any particular item: a federation with no
+    wrap-free category puts every lifter, sleeve-wearer or not, in the same
+    category. Federations and apps use different vocabularies; the raw value is
+    always preserved alongside the normalized member.
+
+    ``MULTI_PLY`` and ``STRAPS_ALLOWED`` exist because federation vocabularies name
+    categories that ``CLASSIC_POWERLIFTING`` and ``SINGLE_PLY`` do not cover.
+    Folding equipped multi-ply into ``SINGLE_PLY`` would assert a distinction the
+    source explicitly draws, so the categories stay separate.
     """
 
     RAW = "raw"
     RAW_EQUIP = "raw_equip"
     CLASSIC_POWERLIFTING = "classic_powerlifting"
     SINGLE_PLY = "single_ply"
+    MULTI_PLY = "multi_ply"
+    #: Competition classes where straps were permitted on the deadlift.
+    STRAPS_ALLOWED = "straps_allowed"
     OTHER = "other"
     UNKNOWN = "unknown"
 
@@ -854,6 +955,11 @@ VOCABULARIES: Final[dict[str, tuple[str, ...]]] = {
     "velocity_method": tuple(member.value for member in VelocityMethod),
     "attempt_result": tuple(member.value for member in AttemptResult),
     "attempt_order_basis": tuple(member.value for member in AttemptOrderBasis),
+    "attempt_role": tuple(member.value for member in AttemptRole),
+    "competition_event": tuple(member.value for member in CompetitionEvent),
+    "participation_status": tuple(member.value for member in ParticipationStatus),
+    "age_precision": tuple(member.value for member in AgePrecision),
+    "reported_best_semantics": tuple(member.value for member in ReportedBestSemantics),
     "competition_result_kind": tuple(member.value for member in CompetitionResultKind),
     "equipment_class": tuple(member.value for member in EquipmentClass),
     "identity_status": tuple(member.value for member in IdentityStatus),

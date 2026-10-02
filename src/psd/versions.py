@@ -130,18 +130,43 @@ class SchemaVersionError(ValueError):
 
 #: Version of the canonical Arrow/Parquet athlete-history schema.
 #:
-#: ``1.1.0`` is a **minor** bump: the only change is an additive one. ``source`` gains
-#: ``publication_basis``, so a source can state *why* its data was published instead of
-#: borrowing the copyright axis or the athlete-consent axis to say so. The four axes a
-#: source must be able to keep apart -- copyright basis, publication basis, athlete
-#: consent, and redistribution rights -- were previously collapsed onto three columns,
-#: and a public-domain archive of published competition results had to be filed as
-#: athlete-consented merely because it was legally redistributable. Adding a nullable
-#: column changes no existing field's meaning, so artifacts remain readable by a reader
-#: at this minor version; the column is persisted in the declared order so no other
-#: table is affected. ``ConsentBasis`` also gains ``public_record``, which asserts a
-#: public record rather than a licence or a consent, and ``PublicationBasis`` is a new
-#: vocabulary, so neither changes the meaning of an existing member.
+#: ``1.1.0`` is a **minor** bump: every change is additive, and no existing field
+#: changes meaning. The driver was RES-237, which read a real full-scale
+#: OpenPowerlifting export and found source semantics the ``1.0.0`` schema could not
+#: state without loss:
+#:
+#: * ``source`` gains ``publication_basis``, so a source can say *why* its data was
+#:   published instead of borrowing the copyright or athlete-consent axis to say so.
+#:   ``ConsentBasis`` also gains ``public_record``: a public-domain archive of
+#:   competition results is freely redistributable and says nothing about whether
+#:   the lifters consented, and a public record is not an open license.
+#: * ``competition_meet`` is a new table. A meet is context, not an outcome: it has
+#:   an identity, a start date, a hosting body, a sanctioning body, and a
+#:   sanctioned/unsanctioned status. It had to be first-class because a source
+#:   exposes only a meet's *start* date, so meet identity cannot be reconstructed
+#:   from the per-athlete results that reference it.
+#: * ``competition`` gains the declared event, the participation status and its
+#:   numeric placing, the reported age *with its precision*, the explicit age class
+#:   and birth-year class, the free-form division, the tested-category flag, the
+#:   lifter's own country/state as reported for that result, and the meet reference.
+#:   Each exists because omitting it would have meant inferring it: a ``DQ`` code
+#:   coerced to a placing, an approximate age rounded to an exact one, an age mined
+#:   out of free-text division, or a wrap-free-permitting equipment category read as
+#:   proof the athlete wore wraps.
+#: * ``competition_attempt`` gains ``source_attempt_raw`` (the signed source value,
+#:   where the sign *is* the result) and ``attempt_role``, and widens
+#:   ``attempt_number`` to 4. A fourth attempt is a record attempt that contributes
+#:   to no total, and without the role a fourth attempt is indistinguishable from a
+#:   third.
+#: * ``competition_reported_result`` gains ``source_value_raw``,
+#:   ``result_source_field``, and ``reported_best_semantics``. A few federations
+#:   publish a *negative* reported best meaning "lowest weight attempted and failed";
+#:   without the semantics column that value has two readings and neither is a
+#:   negative lift.
+#: * ``EquipmentClass`` gains ``multi_ply`` and ``straps_allowed``, because folding
+#:   them into ``single_ply`` or ``other`` would assert a distinction the source
+#:   explicitly draws, or discard a competition category entirely. No existing member
+#:   changed meaning, so this is additive rather than a vocabulary redefinition.
 #:
 #: The steps before it, for the record: ``0.2.0`` added the ``exercise_normalization``
 #: table and tightened descriptor columns from free text to controlled vocabularies,
