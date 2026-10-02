@@ -1,6 +1,17 @@
 {
-  "include": ["src", "tests", "configs"],
-  "exclude": ["**/__pycache__", "**/.venv", "**/dist", "**/build", "**/.pytest_cache"],
+  "include": [
+    "src",
+    "tests",
+    "configs",
+    "scripts"
+  ],
+  "exclude": [
+    "**/__pycache__",
+    "**/.venv",
+    "**/dist",
+    "**/build",
+    "**/.pytest_cache"
+  ],
   "venvPath": ".",
   "venv": ".venv",
   "pythonVersion": "3.12",
