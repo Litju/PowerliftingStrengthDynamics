@@ -34,6 +34,7 @@ from psd.ingest.openpowerlifting.contract import expected_columns
 from psd.ingest.openpowerlifting.snapshot import (
     OpenPowerliftingSnapshot,
     ServiceSnapshotFacts,
+    archive_declared_facts,
     service_snapshot_facts,
 )
 from psd.ingest.openpowerlifting.source import openpowerlifting_source_id
@@ -360,11 +361,88 @@ def test_a_short_download_is_refused_rather_than_pinned(
     assert not list(data_root.rglob("snapshot.json"))
 
 
+#: The bulk page as it actually renders: one HTML tag per line, exactly as the
+#: ``><`` split of the published page produces.
+BULK_PAGE = (
+    "<li>Updated: 2026-09-25.</li>",
+    "<li>Revision: <a href='https://example/f231b4f60f211bb17293057d53a99c7a4acfdc8b'",
+    ">f231b4f6</a>.</li>",
+    "<td style='text-align: left'>",
+    "<a href='https://example/files/openpowerlifting-latest.zip'>openpowerlifting-latest.zip</a>",
+    "</td>",
+    "<td style='text-align: right'>162M</td>",
+    "<td style='text-align: right'>4036910</td>",
+    "<td style='text-align: left'>The complete dataset.</td>",
+)
+
+
 def test_service_facts_are_parsed_from_the_bulk_page() -> None:
-    page = "<html><body><p>Updated: 2026-09-25.</p><p>Revision: f231b4f6.</p></body></html>"
-    facts = service_snapshot_facts(page)
+    facts = service_snapshot_facts("\n".join(BULK_PAGE))
     assert facts.updated_date == "2026-09-25"
-    assert facts.revision == "f231b4f6"
+    assert facts.revision == "f231b4f60f211bb17293057d53a99c7a4acfdc8b"
+    assert facts.advertised_row_count == 4036910
+
+
+def test_the_size_column_is_not_mistaken_for_the_row_count() -> None:
+    """The size cell carries a unit suffix and therefore never parses as a count."""
+    facts = service_snapshot_facts("\n".join(BULK_PAGE).replace("4036910", "N/A"))
+    assert facts.advertised_row_count is None
+
+
+def test_the_service_row_count_is_kept_rather_than_reconciled() -> None:
+    """The page states one figure and the bytes hold another; both are recorded."""
+    facts = service_snapshot_facts("\n".join(BULK_PAGE))
+    assert facts.advertised_row_count == 4036910
+    snapshot = OpenPowerliftingSnapshot(
+        source_url=OPENPOWERLIFTING_BULK_URL,
+        downloaded_at=datetime(2026, 10, 2, tzinfo=UTC),
+        service=facts,
+        archive_sha256="a" * 64,
+        archive_byte_size=1,
+        csv_member_name=CSV_NAME,
+        csv_sha256="b" * 64,
+        csv_byte_size=1,
+        row_count=4036909,
+        source_columns=("Name",),
+    )
+    assert snapshot.row_count != snapshot.service.advertised_row_count
+    assert snapshot.row_count == (snapshot.service.advertised_row_count or 0) - 1
+
+
+def test_the_archive_member_name_declares_its_own_date_and_revision() -> None:
+    """The archive states its identity inside its bytes, independently of the page."""
+    member = "openpowerlifting-2026-09-26/openpowerlifting-2026-09-26-f231b4f6.csv"
+    assert archive_declared_facts(member) == ("2026-09-26", "f231b4f6")
+
+
+def test_an_undated_member_name_declares_nothing() -> None:
+    assert archive_declared_facts("data/openpowerlifting.csv") == (None, None)
+
+
+def test_a_page_and_archive_revision_disagreement_is_reported() -> None:
+    facts = ServiceSnapshotFacts(
+        updated_date="2026-09-25",
+        revision="f231b4f60f211bb17293057d53a99c7a4acfdc8b",
+        archive_declared_date="2026-09-26",
+        archive_declared_revision="f231b4f6",
+    )
+    assert facts.statements_agree is True
+    assert facts.disagreements() == (
+        "bulk page reports snapshot date '2026-09-25' but the archive's CSV member name "
+        "declares '2026-09-26'",
+    )
+
+
+def test_a_short_revision_still_agrees_with_the_full_one() -> None:
+    facts = ServiceSnapshotFacts(revision="f231b4f6", archive_declared_revision="f231b4f60f211")
+    assert facts.statements_agree is True
+    assert facts.disagreements() == ()
+
+
+def test_a_genuinely_different_revision_is_reported() -> None:
+    facts = ServiceSnapshotFacts(revision="aaaaaaaaaaaa", archive_declared_revision="f231b4f6")
+    assert facts.statements_agree is False
+    assert facts.disagreements()
 
 
 def test_service_facts_are_absent_rather_than_guessed() -> None:

@@ -31,6 +31,7 @@ from psd.ingest.openpowerlifting.contract import (
 from psd.ingest.openpowerlifting.snapshot import (
     OpenPowerliftingSnapshot,
     ServiceSnapshotFacts,
+    archive_declared_facts,
     service_snapshot_facts,
 )
 from psd.ingest.openpowerlifting.source import (
@@ -60,6 +61,7 @@ __all__ = (
     "SourceColumnSpec",
     "SourceSchemaError",
     "SourceSchemaReview",
+    "archive_declared_facts",
     "attempt_source_columns",
     "column_spec",
     "expected_columns",

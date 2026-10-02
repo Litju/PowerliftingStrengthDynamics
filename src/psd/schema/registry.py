@@ -734,6 +734,7 @@ TABLE_SPECS: tuple[TableSpec, ...] = (
             "meet_parent_federation",
             "meet_country",
             "meet_state",
+            "meet_town",
             "sanctioned_status_raw",
             "is_sanctioned",
             "created_at",

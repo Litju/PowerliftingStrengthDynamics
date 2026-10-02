@@ -24,8 +24,12 @@ from psd.ingest.openpowerlifting.contract import (
     review_source_schema,
 )
 
-#: The header as published, in order. Written out here rather than imported so a
-#: change to the contract has to be a deliberate edit to this test.
+#: The header as published, in order. Captured from the pinned snapshot
+#: ``32a90763bff87e3e88174cae0dab0c5ee0b178b0db0cbee6027accdd5f350f98`` (CSV digest
+#: ``64e9b473ee376164c9da5adf0a1af54730aeb79bc67a5705a9df1a867e887724``), which is why
+#: the attempts are grouped per lift rather than interleaved and why ``MeetTown``
+#: appears at all. Written out here rather than imported so a change to the contract
+#: has to be a deliberate edit to this test.
 PUBLISHED_HEADER: tuple[str, ...] = (
     "Name",
     "Sex",
@@ -38,19 +42,19 @@ PUBLISHED_HEADER: tuple[str, ...] = (
     "BodyweightKg",
     "WeightClassKg",
     "Squat1Kg",
-    "Bench1Kg",
-    "Deadlift1Kg",
     "Squat2Kg",
-    "Bench2Kg",
-    "Deadlift2Kg",
     "Squat3Kg",
-    "Bench3Kg",
-    "Deadlift3Kg",
     "Squat4Kg",
-    "Bench4Kg",
-    "Deadlift4Kg",
     "Best3SquatKg",
+    "Bench1Kg",
+    "Bench2Kg",
+    "Bench3Kg",
+    "Bench4Kg",
     "Best3BenchKg",
+    "Deadlift1Kg",
+    "Deadlift2Kg",
+    "Deadlift3Kg",
+    "Deadlift4Kg",
     "Best3DeadliftKg",
     "TotalKg",
     "Place",
@@ -66,6 +70,7 @@ PUBLISHED_HEADER: tuple[str, ...] = (
     "Date",
     "MeetCountry",
     "MeetState",
+    "MeetTown",
     "MeetName",
     "Sanctioned",
 )
@@ -83,6 +88,13 @@ def test_every_column_is_declared_exactly_once() -> None:
 
 def test_every_column_is_classified() -> None:
     assert all(spec.disposition in set(SourceColumnDisposition) for spec in SOURCE_COLUMNS)
+
+
+def test_meet_town_is_preserved_rather_than_folded_into_an_address() -> None:
+    """The source publishes a town; PSD stores it and does not format an address."""
+    spec = column_spec("MeetTown")
+    assert spec.disposition is SourceColumnDisposition.PRESERVED
+    assert spec.destination == "competition_meet.meet_town"
 
 
 def test_every_mapped_or_preserved_column_names_a_destination() -> None:

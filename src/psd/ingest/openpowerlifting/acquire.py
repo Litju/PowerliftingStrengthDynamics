@@ -41,6 +41,7 @@ from psd.ingest.openpowerlifting.contract import read_source_header
 from psd.ingest.openpowerlifting.snapshot import (
     OpenPowerliftingSnapshot,
     ServiceSnapshotFacts,
+    archive_declared_facts,
     service_snapshot_facts,
 )
 from psd.ingest.openpowerlifting.source import OPENPOWERLIFTING_BULK_INDEX_URL
@@ -236,9 +237,15 @@ def _read_service_facts(url: str, *, timeout: int) -> ServiceSnapshotFacts:
 def _csv_member_for_archive(archive: Path) -> str:
     """Return the archive member holding the competition data.
 
-    The archive is expected to hold exactly one CSV. More than one means the
-    packaging changed, and picking one would be exactly the silent substitution this
-    pipeline exists to prevent.
+    The member name is *not* derivable from the URL: the published archive nests a
+    dated, revision-suffixed CSV inside a matching folder, e.g.
+    ``openpowerlifting-2026-09-26/openpowerlifting-2026-09-26-f231b4f6.csv``. So the
+    archive is asked rather than the URL guessed from, and the name it gives is the
+    name that gets recorded.
+
+    Exactly one CSV is expected. More than one means the packaging changed, and
+    picking one would be exactly the silent substitution of the corpus this pipeline
+    exists to prevent.
     """
     try:
         with zipfile.ZipFile(archive) as bundle:
@@ -257,20 +264,6 @@ def _csv_member_for_archive(archive: Path) -> str:
         )
         raise AcquisitionError(msg)
     return csv_members[0]
-
-
-def _expected_csv_member(url: str) -> str:
-    """Return the CSV member name the archive URL implies.
-
-    ``openpowerlifting-latest.zip`` publishes ``openpowerlifting-latest.csv``. Deriving
-    it keeps the download to a single transfer; the name is then checked against the
-    archive before anything is read, and a mismatch fails rather than proceeding.
-    """
-    name = url.rsplit("/", maxsplit=1)[-1]
-    if not name.endswith(".zip"):
-        msg = f"Expected a .zip bulk URL; got {url!r}."
-        raise AcquisitionError(msg)
-    return f"{name[: -len('.zip')]}.csv"
 
 
 def _extract_member(archive: Path, member: str, destination: Path) -> tuple[str, int]:
@@ -345,6 +338,21 @@ class PinRequest:
     keep_archive: bool = True
 
 
+def _with_archive_facts(service: ServiceSnapshotFacts, member: str) -> ServiceSnapshotFacts:
+    """Fold the archive's own dated member name into the service facts.
+
+    The page statement and the archive statement are kept side by side so a
+    disagreement is visible. Neither overwrites the other, and neither is dropped.
+    """
+    declared_date, declared_revision = archive_declared_facts(member)
+    return service.model_copy(
+        update={
+            "archive_declared_date": declared_date,
+            "archive_declared_revision": declared_revision,
+        }
+    )
+
+
 def _pin_archive(request: PinRequest, *, data_root: Path | None) -> OpenPowerliftingSnapshot:
     """Verify, extract, describe, and atomically promote one archive."""
     target = snapshot_directory(request.archive_sha256, data_root=data_root)
@@ -366,7 +374,7 @@ def _pin_archive(request: PinRequest, *, data_root: Path | None) -> OpenPowerlif
         snapshot = OpenPowerliftingSnapshot(
             source_url=request.source_url,
             downloaded_at=_utcnow(),
-            service=request.service,
+            service=_with_archive_facts(request.service, member),
             archive_sha256=request.archive_sha256,
             archive_byte_size=request.archive_byte_size,
             csv_member_name=member,
@@ -482,17 +490,12 @@ def acquire_snapshot(
         The pinned snapshot. Re-running against unchanged bytes returns the existing
         snapshot without writing a second copy.
     """
-    expected_member = _expected_csv_member(url)
     incoming = _staging_root(data_root) / "incoming"
-    downloaded = download_archive(url, incoming / url.rsplit("/", maxsplit=1)[-1], timeout=timeout)
-    member = _csv_member_for_archive(downloaded.path)
-    if member != expected_member:
-        # The archive stays in staging and nothing is promoted.
-        msg = (
-            f"The downloaded archive holds {member!r} but {url!r} implies {expected_member!r}. "
-            "Refusing to pin a snapshot whose contents do not match its published name."
-        )
+    destination = incoming / url.rsplit("/", maxsplit=1)[-1]
+    if not destination.name.endswith(".zip"):
+        msg = f"Expected a .zip bulk URL; got {url!r}."
         raise AcquisitionError(msg)
+    downloaded = download_archive(url, destination, timeout=timeout)
     service = _read_service_facts(service_index_url, timeout=timeout)
     return _pin_archive(
         PinRequest(

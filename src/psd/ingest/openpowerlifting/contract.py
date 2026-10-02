@@ -203,21 +203,15 @@ SOURCE_COLUMNS: Final[tuple[SourceColumnSpec, ...]] = (
             "did not state."
         ),
     ),
-    # Attempts. Twelve columns, read with their sign intact.
+    # Attempts and reported bests, grouped by lift exactly as the source publishes them.
     _spec(
         "Squat1Kg",
         SourceColumnDisposition.MAPPED,
         "competition_attempt.load_kg",
         note="Optional. Negative means a failed attempt; the sign is the result encoding.",
     ),
-    _spec("Bench1Kg", SourceColumnDisposition.MAPPED, "competition_attempt.load_kg"),
-    _spec("Deadlift1Kg", SourceColumnDisposition.MAPPED, "competition_attempt.load_kg"),
     _spec("Squat2Kg", SourceColumnDisposition.MAPPED, "competition_attempt.load_kg"),
-    _spec("Bench2Kg", SourceColumnDisposition.MAPPED, "competition_attempt.load_kg"),
-    _spec("Deadlift2Kg", SourceColumnDisposition.MAPPED, "competition_attempt.load_kg"),
     _spec("Squat3Kg", SourceColumnDisposition.MAPPED, "competition_attempt.load_kg"),
-    _spec("Bench3Kg", SourceColumnDisposition.MAPPED, "competition_attempt.load_kg"),
-    _spec("Deadlift3Kg", SourceColumnDisposition.MAPPED, "competition_attempt.load_kg"),
     _spec(
         "Squat4Kg",
         SourceColumnDisposition.MAPPED,
@@ -229,18 +223,6 @@ SOURCE_COLUMNS: Final[tuple[SourceColumnSpec, ...]] = (
         ),
     ),
     _spec(
-        "Bench4Kg",
-        SourceColumnDisposition.MAPPED,
-        "competition_attempt.load_kg",
-        note="Optional. A record attempt; contributes to no total.",
-    ),
-    _spec(
-        "Deadlift4Kg",
-        SourceColumnDisposition.MAPPED,
-        "competition_attempt.load_kg",
-        note="Optional. A record attempt; contributes to no total.",
-    ),
-    _spec(
         "Best3SquatKg",
         SourceColumnDisposition.MAPPED,
         "competition_reported_result.value",
@@ -250,7 +232,25 @@ SOURCE_COLUMNS: Final[tuple[SourceColumnSpec, ...]] = (
             "failed; that meaning is recorded explicitly rather than read as a negative lift."
         ),
     ),
+    _spec("Bench1Kg", SourceColumnDisposition.MAPPED, "competition_attempt.load_kg"),
+    _spec("Bench2Kg", SourceColumnDisposition.MAPPED, "competition_attempt.load_kg"),
+    _spec("Bench3Kg", SourceColumnDisposition.MAPPED, "competition_attempt.load_kg"),
+    _spec(
+        "Bench4Kg",
+        SourceColumnDisposition.MAPPED,
+        "competition_attempt.load_kg",
+        note="Optional. A record attempt; contributes to no total.",
+    ),
     _spec("Best3BenchKg", SourceColumnDisposition.MAPPED, "competition_reported_result.value"),
+    _spec("Deadlift1Kg", SourceColumnDisposition.MAPPED, "competition_attempt.load_kg"),
+    _spec("Deadlift2Kg", SourceColumnDisposition.MAPPED, "competition_attempt.load_kg"),
+    _spec("Deadlift3Kg", SourceColumnDisposition.MAPPED, "competition_attempt.load_kg"),
+    _spec(
+        "Deadlift4Kg",
+        SourceColumnDisposition.MAPPED,
+        "competition_attempt.load_kg",
+        note="Optional. A record attempt; contributes to no total.",
+    ),
     _spec("Best3DeadliftKg", SourceColumnDisposition.MAPPED, "competition_reported_result.value"),
     _spec(
         "TotalKg",
@@ -351,6 +351,16 @@ SOURCE_COLUMNS: Final[tuple[SourceColumnSpec, ...]] = (
     ),
     _spec("MeetCountry", SourceColumnDisposition.MAPPED, "competition_meet.meet_country"),
     _spec("MeetState", SourceColumnDisposition.MAPPED, "competition_meet.meet_state"),
+    _spec(
+        "MeetTown",
+        SourceColumnDisposition.PRESERVED,
+        "competition_meet.meet_town",
+        note=(
+            "The town or city the meet was held in. Kept as its own column rather than "
+            "concatenated into a location string: PSD stores what the source states and "
+            "does not synthesise a formatted address."
+        ),
+    ),
     _spec(
         "MeetName",
         SourceColumnDisposition.MAPPED,

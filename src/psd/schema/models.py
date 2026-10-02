@@ -1367,6 +1367,7 @@ class CompetitionMeetRecord(ContextRecord):
     meet_parent_federation: str | None = Field(default=None, max_length=128)
     meet_country: str | None = Field(default=None, max_length=128)
     meet_state: str | None = Field(default=None, max_length=128)
+    meet_town: str | None = Field(default=None, max_length=128)
     sanctioned_status_raw: str | None = Field(default=None, max_length=64)
     is_sanctioned: bool | None = None
 
