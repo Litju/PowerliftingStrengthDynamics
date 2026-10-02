@@ -9,23 +9,41 @@ depends on the PyArrow version, row-group size, compression settings, and
 dictionary ordering. This module defines an encoding whose bytes depend **only**
 on the logical contents.
 
-Encoding specification (``psd-canonical-content/1``)
+Encoding specification (``psd-canonical-content/2``)
 -----------------------------------------------------
 
 ::
 
-    header    := "psd-canonical-content/1\\n"
-                 "table:"  <table name> "\\n"
-                 "columns:" <comma-joined column names> "\\n"
-                 "rows:"   <decimal row count> "\\n"
-    row       := <value> for each column, in declared column order
+    header    := "psd-canonical-content/2\\n"
+                 "table:"    <table name> "\\n"
+                 "columns:"  <comma-joined encoded column names> "\\n"
+                 "excluded:" <comma-joined run-local column names> "\\n"
+                 "rows:"     <decimal row count> "\\n"
+    row       := <value> for each encoded column, in declared column order
     value     := "N;"                                   (null)
                | "B0;" | "B1;"                          (bool)
-               | "I" <decimal> ";"                      (int64)
-               | "F" <float.hex()> ";"                  (float64)
-               | "T" <ISO-8601 UTC with 6-digit micros> ";"  (timestamp)
-               | "S" <byte length> ":" <utf-8 text> ";"  (string)
-               | "L" <element count> ";" <value>*        (list)
+               | "T" ... etc, as in version 1
+
+Version 2 adds one line and one rule
+------------------------------------
+
+``ingested_at`` is excluded from the digest. It records *when PSD read the row*, not
+*what the source said*, and a digest that moves with wall-clock time is not a digest of
+anything reproducible. On a corpus the difference is stark: two builds of one pinned
+snapshot on different days differ in exactly this column and in nothing else, so with it
+included no corpus build could ever be shown to be reproducible -- which is the whole
+claim a content digest exists to support. With it excluded, ``content_sha256`` means "the
+same logical content", and the header's ``excluded:`` line says what was left out.
+
+Nothing is lost. The column is still persisted on every row, the manifest still records
+the run's ``created_at`` and environment, and ``sha256`` still covers the file bytes, so
+two runs of the same snapshot differ in every digest they publish *except* the logical one.
+That is the honest statement: the rows say the same thing, the runs did not happen at the
+same time.
+
+The exclusion is narrow and named rather than implicit. One column, part of the provenance
+contract every canonical table shares, excluded by a declared constant that the encoding's
+own header reports.
 
 Design notes
 ------------
@@ -58,14 +76,36 @@ from psd.timeutil import as_utc, iso_utc
 
 __all__ = (
     "CONTENT_ENCODING",
+    "RUN_LOCAL_COLUMNS",
     "CanonicalEncodingError",
     "canonical_bytes",
     "content_digest",
     "content_header",
     "encode_rows",
+    "encoded_columns",
 )
 
-CONTENT_ENCODING: Final[str] = "psd-canonical-content/1"
+CONTENT_ENCODING: Final[str] = "psd-canonical-content/2"
+
+#: Columns that describe the ingestion *run* rather than the source's content.
+#:
+#: ``ingested_at`` is when PSD read the row. It is genuine provenance and it is persisted;
+#: it is simply not content, and a reproducibility check has to be able to say so. See the
+#: module docstring for why including it made every corpus build non-reproducible.
+RUN_LOCAL_COLUMNS: Final[frozenset[str]] = frozenset({"ingested_at"})
+
+
+def encoded_columns(columns: Sequence[str]) -> tuple[str, ...]:
+    """Return the columns the content digest covers, in declared order.
+
+    Args:
+        columns: A table's full declared column list.
+
+    Returns:
+        The subset the digest encodes. A table with no run-local column is unchanged.
+    """
+    return tuple(name for name in columns if name not in RUN_LOCAL_COLUMNS)
+
 
 _LIST_TAG: Final[bytes] = b"L"
 _NULL: Final[bytes] = b"N;"
@@ -96,6 +136,17 @@ def canonical_bytes(table: pa.Table, *, table_name: str) -> bytes:
     return b"".join([header, *encode_rows(table)])
 
 
+def content_columns(columns: Sequence[str]) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """Return the encoded and the excluded column lists for *columns*.
+
+    Split out because the digest's header has to name both and the two must be derived from
+    the same declaration: a header that listed one set while the rows encoded another would
+    be a digest nobody could reproduce.
+    """
+    excluded = tuple(name for name in columns if name in RUN_LOCAL_COLUMNS)
+    return encoded_columns(columns), excluded
+
+
 def content_header(columns: Sequence[str], *, table_name: str, row_count: int) -> bytes:
     """Return the canonical encoding's header for a described table.
 
@@ -104,14 +155,33 @@ def content_header(columns: Sequence[str], *, table_name: str, row_count: int) -
     materializing the whole table just to hash it. The header declares the row count
     up front, which is why a streaming writer may only open its digest once it knows
     the final count: the declared count must be the count actually written.
+
+    Args:
+        columns: The table's **full** declared column list. The header reports both the
+            columns the digest encodes and the run-local ones it excludes, so a reader can
+            see what the digest covers without reading this module.
+        table_name: Logical table name.
+        row_count: Rows the encoding that follows describes.
+
+    Returns:
+        The header bytes.
     """
+    encoded, excluded = content_columns(columns)
     return (
-        f"{CONTENT_ENCODING}\ntable:{table_name}\ncolumns:{','.join(columns)}\nrows:{row_count}\n"
+        f"{CONTENT_ENCODING}\ntable:{table_name}\ncolumns:{','.join(encoded)}"
+        f"\nexcluded:{','.join(excluded)}\nrows:{row_count}\n"
     ).encode()
 
 
-def encode_rows(table: pa.Table) -> list[bytes]:
+def encode_rows(table: pa.Table, *, columns: Sequence[str] | None = None) -> list[bytes]:
     """Return the canonical encoding of each row of *table*, in row order.
+
+    Args:
+        table: The rows to encode.
+        columns: The columns to encode, in the order they are encoded. Defaults to the
+            table's declared columns minus the run-local ones, which is what
+            :func:`canonical_bytes` and the streaming writer both use, so the three can
+            never disagree about what the digest covers.
 
     Column values are converted a column at a time through Arrow's own converter,
     which is C-speed. A streaming writer calls this per batch so that the Python
@@ -128,7 +198,9 @@ def encode_rows(table: pa.Table) -> list[bytes]:
     and the formatted string follows from arithmetic. :func:`_encode_epoch_micros` produces
     exactly the bytes :func:`_encode_timestamp` does, which a test asserts.
     """
-    column_values: list[list[Any]] = [_column_values(column) for column in table.columns]
+    selected = encoded_columns(table.schema.names) if columns is None else tuple(columns)
+    payload = table if len(selected) == table.num_columns else table.select(list(selected))
+    column_values: list[list[Any]] = [_column_values(column) for column in payload.columns]
     width = len(column_values)
     return [
         b"".join(

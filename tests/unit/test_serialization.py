@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Final
 
 import polars as pl
 import pyarrow as pa
@@ -36,7 +36,13 @@ from psd.serialization import (
     table_to_records,
     write_parquet,
 )
-from psd.serialization.canonical import CONTENT_ENCODING
+from psd.serialization.canonical import (
+    CONTENT_ENCODING,
+    RUN_LOCAL_COLUMNS,
+    content_columns,
+    content_header,
+    encoded_columns,
+)
 from psd.serialization.ordering import canonical_order_polars
 from psd.units import LB_TO_KG
 
@@ -293,3 +299,55 @@ def test_content_digest_survives_row_reordering(value: float, unit: str) -> None
 def test_digest_is_stable_for_a_single_row(index: int) -> None:
     row = [SET_TEMPLATES[index]]
     assert _digest(_table(list(row))) == _digest(_table(list(row)))
+
+
+# ---------------------------------------------------------------------------
+# Run-local provenance is excluded, and says so
+# ---------------------------------------------------------------------------
+
+_SET_TABLE: Final[str] = "performed_set"
+
+
+def test_the_encoding_declares_the_columns_it_excludes() -> None:
+    """A reader must be able to see what the digest left out without reading the source.
+
+    The header names both halves. Without that, "two artifacts share a content digest"
+    would be an unfalsifiable claim.
+    """
+    columns = ("competition_id", "athlete_id", "ingested_at", "quality_flags")
+    encoded, excluded = content_columns(columns)
+    header = content_header(columns, table_name="competition", row_count=3)
+
+    assert encoded == ("competition_id", "athlete_id", "quality_flags")
+    assert excluded == ("ingested_at",)
+    assert b"columns:competition_id,athlete_id,quality_flags" in header
+    assert b"excluded:ingested_at" in header
+    assert {"ingested_at"} == RUN_LOCAL_COLUMNS
+
+
+def test_only_run_local_columns_are_excluded() -> None:
+    """Everything that is a fact about the source stays in the digest.
+
+    ``performed_at`` is when the work happened, read from the source, so two artifacts that
+    disagree about it must not share a content digest.
+    """
+    columns = ("performed_set_id", "performed_at", "created_at", "modified_at")
+
+    assert set(RUN_LOCAL_COLUMNS).isdisjoint(columns)
+    assert encoded_columns(columns) == columns
+
+
+def test_a_row_that_differs_only_in_ingested_at_keeps_the_digest() -> None:
+    """The property the exclusion exists for, asserted directly."""
+    base = SET_TEMPLATES[0]
+    later = {**base, "ingested_at": datetime(2030, 1, 1, tzinfo=UTC)}
+
+    assert _digest(_table([base])) == _digest(_table([later]))
+
+
+def test_a_row_that_differs_in_a_source_field_changes_the_digest() -> None:
+    """The exclusion must not have swallowed the columns that carry the meaning."""
+    base = SET_TEMPLATES[0]
+    heavier = {**base, "load_kg": base["load_kg"] + 1.0, "load_raw": base["load_raw"] + 1.0}
+
+    assert _digest(_table([base])) != _digest(_table([heavier]))

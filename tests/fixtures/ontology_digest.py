@@ -23,6 +23,12 @@ competition-deadlift stance semantics changed, ``Competition Deadlift`` and
 ``Deadlift (Conventional)`` were retargeted, and ``exercise_normalization`` lost the
 uncalibrated ``confidence`` column. All three change what the artifact means, which is
 exactly what a committed digest exists to make visible.
+
+``psd-canonical-content/2`` re-pinned it once more for a reason that is *not* a change to
+the vocabulary. The content encoding began excluding ``ingested_at`` -- the instant PSD
+read a row -- so that two runs of the same source produce the same logical digest. The
+ontology's rows are byte-for-byte what they were; only the function that digests them
+moved, and the encoding version in the digest's header moved with it.
 """
 
 from __future__ import annotations
@@ -38,13 +44,13 @@ __all__ = ("EXPECTED_ONTOLOGY_DIGEST", "EXPECTED_TABLE_DIGESTS", "ontology_diges
 
 #: Per-table digests, so a divergence names the table that changed.
 EXPECTED_TABLE_DIGESTS: dict[str, str] = {
-    "exercise_definition": "84a7069051c3b9de2fea287d24aa4974d2d56546383780ee12b9557776bcccc7",
-    "exercise_alias": "e7edf50280e1137d7351ca6643a769ee467645d35c4f2bcffaeb86819a960af3",
-    "exercise_normalization": "8a24e2f97345073a88328be63c27e36073c28adb1194e207a25ff3381217a0c9",
+    "exercise_definition": "9be883f7db990b574b143a5f1e66fab75fec045868a85be15b2d1df272900c58",
+    "exercise_alias": "f9b2daeba9a668f66b5dc7df1f534d7c84bdf5c28edfb8344119eec614199f60",
+    "exercise_normalization": "7b8adef5065f9b97e4f09558b8a117026f791ff46bf3b90968d2c2e3a62c699c",
 }
 
 #: A single digest over all three tables, in registry order.
-EXPECTED_ONTOLOGY_DIGEST: str = "b7aa0fa75be0860280a0d5c14f3d5e42103d7c73de2eb7da1bc541059ed3f000"
+EXPECTED_ONTOLOGY_DIGEST: str = "6ad8f539894bf283862f1f7089387ee2315cd5d2a2eda4dcccf293565c20bd96"
 
 ONTOLOGY_TABLES: tuple[str, ...] = (
     "exercise_definition",

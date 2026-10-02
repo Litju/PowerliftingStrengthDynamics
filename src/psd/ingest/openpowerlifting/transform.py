@@ -237,8 +237,11 @@ class BuildConfig:
             whole number of the Parquet profile's row groups, which makes the corpus's
             artifacts byte-identical to what the single-shot writer would produce from the
             same rows.
-        partitions: Partition count, at most the sixteen a digest can start with. Memory
-            for the later passes is roughly the corpus divided by this.
+        partitions: Partition count. It must divide the sixteen a digest can start with,
+            which is what keeps the partition walk in identity order: buckets are produced
+            by scaling the leading hex digit, and that only preserves order for a divisor
+            of sixteen. Checked here rather than at the point of use, so a caller finds out
+            before a multi-hour build rather than after its first staging pass.
     """
 
     chunk_rows: int = 400_000
@@ -251,10 +254,19 @@ class BuildConfig:
             if value < 1:
                 msg = f"{name} must be at least 1; got {value}."
                 raise ValueError(msg)
-        if self.partitions > len(_PARTITION_ALPHABET):
+        alphabet = len(_PARTITION_ALPHABET)
+        if self.partitions > alphabet:
             msg = (
-                "partitions must not exceed the identity alphabet size "
-                f"({len(_PARTITION_ALPHABET)}); got {self.partitions}."
+                f"partitions must not exceed the identity alphabet size ({alphabet}); "
+                f"got {self.partitions}."
+            )
+            raise ValueError(msg)
+        if alphabet % self.partitions != 0:
+            msg = (
+                "partitions must divide the sixteen a digest can start with; got "
+                f"{self.partitions}. Bucketing by scaling the leading hex digit is what "
+                "keeps the partition walk in identity order, and that only works for a "
+                "divisor of sixteen."
             )
             raise ValueError(msg)
 

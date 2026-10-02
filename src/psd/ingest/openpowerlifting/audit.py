@@ -93,6 +93,7 @@ __all__ = (
     "SourceAudit",
     "audit_corpus",
     "audit_markdown",
+    "corpus_expansion_invariants",
     "coverage_table",
     "expansion_invariants",
     "read_audit",
@@ -1111,7 +1112,13 @@ def _register(connection: duckdb.DuckDBPyConnection, table: str, path: Path) -> 
     if not path.is_file():
         msg = f"Cannot audit {table}: no artifact at {path}."
         raise AuditError(msg)
-    connection.read_parquet(str(path)).create_view(table)
+    try:
+        connection.read_parquet(str(path)).create_view(table)
+    except (duckdb.Error, OSError, ValueError) as error:
+        # A file that exists but cannot be read is a finding, not a crash: the audit's
+        # job is to report the state of the corpus, and an unreadable artifact is a state.
+        msg = f"Cannot audit {table}: {path} is unreadable ({error})."
+        raise AuditError(msg) from error
 
 
 def _scalar(connection: duckdb.DuckDBPyConnection, sql: str) -> int:
@@ -1940,6 +1947,52 @@ def _history_rows(request: AuditRequest, directory: Path) -> int | None:
     if row is None or row[0] is None:
         return None
     return int(row[0])
+
+
+def corpus_expansion_invariants(
+    dataset_dir: Path | str,
+    *,
+    data_root: Path | None = None,
+    archive_sha256: str | None = None,
+    memory_limit: str = DEFAULT_MEMORY_LIMIT,
+    threads: int = DEFAULT_THREADS,
+) -> tuple[Invariant, ...]:
+    """Re-derive :func:`expansion_invariants` against one persisted corpus.
+
+    A verification step, not a report: it opens the corpus, checks the invariants, and
+    writes nothing. The full audit writes a document and answers far more questions, and a
+    verification gate that had to produce that document first would be both slower and
+    harder to reason about.
+
+    Args:
+        dataset_dir: The built corpus, relative to the data root.
+        data_root: External PSD data root.
+        archive_sha256: Unused here; accepted so a caller can pass one request's identity
+            through unchanged.
+        memory_limit: DuckDB memory ceiling.
+        threads: DuckDB worker threads.
+
+    Returns:
+        One invariant per claim, each carrying what the corpus actually holds.
+
+    Raises:
+        AuditError: The corpus does not declare the canonical tables the checks need.
+    """
+    request = AuditRequest(
+        dataset_dir=Path(dataset_dir),
+        data_root=data_root,
+        archive_sha256=archive_sha256,
+        memory_limit=memory_limit,
+        threads=threads,
+    )
+    _manifest, directory = _dataset_paths(request)
+    connection = _open(request)
+    try:
+        for table in corpus_table_names():
+            _register(connection, table, directory / "tables" / f"{table}.parquet")
+        return expansion_invariants(connection)
+    finally:
+        connection.close()
 
 
 def audit_corpus(request: AuditRequest) -> AuditResult:

@@ -189,6 +189,39 @@ def test_build_is_reproducible_from_the_same_bytes(
     assert first.counters.to_dict() == second.counters.to_dict()
 
 
+def test_the_content_digest_does_not_move_with_the_ingestion_clock(
+    pinned: tuple[Path, OpenPowerliftingSnapshot],
+) -> None:
+    """Two builds a season apart differ in every digest except the logical one.
+
+    ``ingested_at`` records when PSD read the row, not what the source said. If it entered
+    the content digest then no corpus build could ever be shown to be reproducible, because
+    the wall clock alone would have changed it. With it excluded, ``content_sha256`` means
+    "the same logical content" -- and the byte digest still moves, which is the honest
+    statement that the two runs did not happen at the same time.
+    """
+    root, snapshot = pinned
+    first = _build(root / "data", snapshot)
+    later = build_corpus(
+        BuildRequest(
+            csv_path=resolve_snapshot_csv(snapshot, data_root=root / "data"),
+            snapshot=snapshot,
+            data_root=root / "data",
+            config=CONFIG,
+            ingested_at=datetime(2027, 3, 14, 15, 9, 26, tzinfo=UTC),
+        )
+    )
+
+    assert [a.content_sha256 for a in first.manifest.artifacts] == [
+        a.content_sha256 for a in later.manifest.artifacts
+    ]
+    assert first.row_counts == later.row_counts
+    assert [a.sha256 for a in first.manifest.artifacts] != [
+        a.sha256 for a in later.manifest.artifacts
+    ], "the byte digest must still record that the runs happened at different times"
+    assert first.manifest.created_at != later.manifest.created_at
+
+
 def test_build_is_independent_of_partition_and_batch_size(
     pinned: tuple[Path, OpenPowerliftingSnapshot],
 ) -> None:
