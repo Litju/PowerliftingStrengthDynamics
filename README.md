@@ -69,9 +69,22 @@ transfer coefficient, no specificity score, and no statement that one variation
 substitutes for another. Models learn those relationships from the published
 descriptors.
 
+**A competition label names a lift, not a stance.** `Competition Squat`, `Competition
+Bench`, and `Competition Deadlift` resolve to the bare competition lift, because the
+rules define each lift by grip, start, and the completed erect position rather than by
+every observable a label could mention. The deadlift makes this concrete: the IPF
+Technical Rulebook prescribes neither a conventional nor a sumo stance, and both are
+legal performances of the same lift. So `deadlift` is the stance-unspecified
+competition lift (`specificity_level = competition_lift`, `stance = not_specified`),
+while `conventional_deadlift` and `sumo_deadlift` are two stance-qualified variations
+of it — both `competition_variation`, symmetrically, neither privileged. A source that
+does state a stance gets the stance-qualified entity, exactly as `Low Bar Squat` gets
+`low_bar_squat`.
+
 ```powershell
 uv run psd ontology version
 uv run psd ontology resolve "Low Bar Squat" "Machine press" --source hevy
+uv run psd ontology resolve "Competition Deadlift" "Sumo Deadlift"
 uv run psd ontology build
 ```
 
@@ -149,9 +162,10 @@ lives only inside command functions.
 
 * **Stage:** pre-alpha (`Development Status :: 2 - Pre-Alpha`).
 * **Schema version:** `psd-canonical/0.2.0` — not a frozen public contract.
-* **Ontology version:** `psd-ontology/0.1.0`, alias registry
-  `psd-ontology-alias/0.1.0` — tracked separately, because adding a source alias must
-  not imply that a canonical exercise identity changed.
+* **Ontology version:** `psd-ontology/1.0.0`, alias registry
+  `psd-ontology-alias/1.0.0` — tracked separately, because adding a source alias must
+  not imply that a canonical exercise identity changed. Both are major because the
+  competition-deadlift stance semantics changed and two alias bindings were retargeted.
 * **Design authority:** scientific design documents are *tentative*; the technical
   stack and engineering constraints document is *locked* for v0/Alpha.
 

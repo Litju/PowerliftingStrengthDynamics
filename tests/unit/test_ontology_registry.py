@@ -1,9 +1,11 @@
 """Unit tests for the ontology resolver: the ladder, ambiguity, and collisions.
 
-Every test here maps to one of the policies the resolver promises. The group that
-matters most is the ambiguity group: those tests assert that labels PSD *could* have
-mapped are still left open, because raising coverage is never a reason to invent a
-mapping.
+Every test here maps to one of the policies the resolver promises. Two groups carry
+most of the weight. The ambiguity group asserts that labels PSD *could* have mapped are
+still left open, because raising coverage is never a reason to invent a mapping. The
+deadlift group asserts that a competition-discipline label names a lift rather than a
+stance, because the rules prescribe neither a conventional nor a sumo stance and an
+ontology that says otherwise is making a claim about the sport.
 """
 
 from __future__ import annotations
@@ -36,6 +38,7 @@ from psd.schema.vocabulary import (
     ResolutionMethod,
     ResolutionStatus,
     SpecificityLevel,
+    Stance,
 )
 
 ONTOLOGY = default_ontology()
@@ -515,5 +518,111 @@ def test_default_namespace_is_psds_own() -> None:
 
 
 def test_ontology_reports_its_versions() -> None:
-    assert ONTOLOGY.ontology_version.tag == "psd-ontology/0.1.0"
-    assert ONTOLOGY.alias_registry_version.tag == "psd-ontology-alias/0.1.0"
+    assert ONTOLOGY.ontology_version.tag == "psd-ontology/1.0.0"
+    assert ONTOLOGY.alias_registry_version.tag == "psd-ontology-alias/1.0.0"
+
+
+# ---------------------------------------------------------------------------
+# the competition deadlift names a lift, not a stance
+# ---------------------------------------------------------------------------
+
+
+#: ``(label, resolved key, the key it must never become)`` for the deadlift family.
+DEADLIFT_LADDER: tuple[tuple[str, str, str], ...] = (
+    # A bare lift and a competition-discipline label are the same stance-unspecified
+    # identity. Neither may be read as a stance the rules never prescribed.
+    ("Deadlift", "deadlift", "conventional_deadlift"),
+    ("Competition Deadlift", "deadlift", "conventional_deadlift"),
+    ("Comp Deadlift", "deadlift", "conventional_deadlift"),
+    # A source that states a stance gets the stance-qualified entity.
+    ("Conventional Deadlift", "conventional_deadlift", "deadlift"),
+    ("Conventional Pull", "conventional_deadlift", "deadlift"),
+    ("Deadlift (Conventional)", "conventional_deadlift", "deadlift"),
+    ("Sumo Deadlift", "sumo_deadlift", "deadlift"),
+    ("Sumo DL", "sumo_deadlift", "deadlift"),
+    # And the two stances never collapse into one another.
+    ("Sumo Deadlift", "sumo_deadlift", "conventional_deadlift"),
+    ("Conventional Deadlift", "conventional_deadlift", "sumo_deadlift"),
+)
+
+
+@pytest.mark.parametrize(("label", "resolved", "forbidden"), DEADLIFT_LADDER)
+@pytest.mark.parametrize("source_system", ["psd_registry", "hevy", "strong", "generic_csv"])
+def test_the_competition_deadlift_names_a_lift_not_a_stance(
+    label: str, resolved: str, forbidden: str, source_system: str
+) -> None:
+    outcome = ONTOLOGY.resolve(label, source_system=source_system)
+    assert outcome.exercise_key == resolved, f"{label!r} -> {outcome.exercise_key!r}"
+    assert outcome.exercise_key != forbidden
+
+
+def test_bare_and_competition_deadlift_are_the_same_stance_unspecified_identity() -> None:
+    """The rules prescribe neither stance, so the discipline label adds no stance."""
+    bare = ONTOLOGY.resolve("Deadlift")
+    competition = ONTOLOGY.resolve("Competition Deadlift")
+    assert bare.exercise_id == competition.exercise_id == exercise_id_for("deadlift")
+    assert ONTOLOGY.spec("deadlift").stance.value == "not_specified"
+    assert bare.resolution_status is ResolutionStatus.EXACT_CANONICAL
+    assert competition.resolution_method in {
+        ResolutionMethod.CANONICAL_IDENTITY,
+        ResolutionMethod.REGISTERED_ALIAS,
+        ResolutionMethod.CROSS_SOURCE_ALIAS,
+    }
+
+
+def test_conventional_and_sumo_carry_symmetric_competition_specificity() -> None:
+    """Both stances are legal performances of the competition deadlift.
+
+    If either outranked the other, the ontology would be asserting something about
+    the sport that the rulebook does not say, and a model reading
+    ``specificity_level`` as evidence would inherit the mistake.
+    """
+    conventional = ONTOLOGY.spec("conventional_deadlift")
+    sumo = ONTOLOGY.spec("sumo_deadlift")
+    assert conventional.specificity_level is SpecificityLevel.COMPETITION_VARIATION
+    assert sumo.specificity_level is SpecificityLevel.COMPETITION_VARIATION
+    for descriptor in (
+        "parent_lift",
+        "specificity_level",
+        "implement",
+        "bar_type",
+        "equipment",
+        "laterality",
+        "range_of_motion",
+        "pause_rule",
+        "tempo",
+    ):
+        assert getattr(conventional, descriptor) == getattr(sumo, descriptor), descriptor
+    assert conventional.stance is Stance.MODERATE
+    assert sumo.stance is Stance.WIDE
+    assert conventional.key != sumo.key
+
+
+def test_no_deadlift_style_claims_to_be_the_competition_lift_itself() -> None:
+    """Only the stance-unspecified ``deadlift`` may be ``COMPETITION_LIFT``.
+
+    A stance-qualified style claiming that class is what would bind "competition
+    deadlift" to a stance, so the whole family is checked rather than the two entries.
+    """
+    styles = [
+        spec
+        for spec in ONTOLOGY.specs
+        if spec.parent_lift is ParentLift.DEADLIFT
+        and spec.specificity_level is SpecificityLevel.COMPETITION_LIFT
+    ]
+    assert [spec.key for spec in styles] == ["deadlift"]
+
+
+def test_a_competition_lift_leaves_the_descriptors_the_rules_do_not_fix_open() -> None:
+    """Structural guard against the same class of claim on any lift.
+
+    ``COMPETITION_LIFT`` means "the lift as the rules define it", and the rules fix
+    grip, start, and the completed position rather than every observable. An exercise
+    that narrows a descriptor the rules leave open is a variation of the lift, so
+    claiming that class with a narrowed descriptor is always a category error.
+    """
+    open_about = {Stance.UNKNOWN, Stance.NOT_SPECIFIED}
+    for spec in ONTOLOGY.specs:
+        if spec.specificity_level is not SpecificityLevel.COMPETITION_LIFT:
+            continue
+        assert spec.stance in open_about, spec.key

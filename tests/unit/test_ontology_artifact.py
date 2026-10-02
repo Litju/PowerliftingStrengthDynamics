@@ -93,13 +93,13 @@ def test_the_registry_source_is_declared_synthetic_and_not_real_athlete_data() -
 
 
 def test_the_dataset_id_and_path_derive_from_the_ontology_version() -> None:
-    assert ontology_dataset_id(ONTOLOGY) == "psd-ontology-0.1.0"
+    assert ontology_dataset_id(ONTOLOGY) == "psd-ontology-1.0.0"
     relative = ontology_relative_path(ONTOLOGY)
-    assert relative == Path("canonical") / "ontology" / "psd-ontology-0.1.0"
+    assert relative == Path("canonical") / "ontology" / "psd-ontology-1.0.0"
     # The leaf carries a filesystem-safe rendering of the version tag: a literal "/"
     # would be a separator on one platform and illegal in a Windows filename.
-    assert relative.name == "psd-ontology-0.1.0"
-    assert relative.parts == ("canonical", "ontology", "psd-ontology-0.1.0")
+    assert relative.name == "psd-ontology-1.0.0"
+    assert relative.parts == ("canonical", "ontology", "psd-ontology-1.0.0")
 
 
 def test_a_build_uses_a_fixed_epoch_by_default(dataset: CanonicalDataset) -> None:

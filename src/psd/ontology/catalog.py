@@ -40,6 +40,25 @@ against real data before relying on them. A new namespace may be added without
 touching this file's semantics, because ``source_system`` is free text on the
 persisted column.
 
+What a competition-discipline label names
+-----------------------------------------
+
+A label that names the competition *discipline* -- "Competition Squat",
+"Competition Bench", "Competition Deadlift" -- resolves to the bare competition lift
+and nothing narrower, because the rules define each lift by grip, start, and the
+completed erect position rather than by every observable a label could mention. The
+deadlift is the case that makes this obvious: the current IPF Technical Rulebook
+defines the deadlift by bar position, grip, the start from the floor, and the
+completed erect position, and it prescribes **neither** a conventional nor a sumo
+stance. Both are legal performances of the same lift.
+
+So ``deadlift`` is the stance-unspecified competition lift, and ``conventional_deadlift``
+and ``sumo_deadlift`` are two stance-qualified variations of it -- carrying the same
+specificity class, symmetrically. Neither is privileged for being the stance a lifter
+more often meets, and a bare "Competition Deadlift" does not pick one. A source that
+does name a stance ("Conventional Deadlift", "Sumo Deadlift") gets the stance-qualified
+entity, exactly as "Low Bar Squat" gets ``low_bar_squat``.
+
 What is deliberately absent
 ---------------------------
 
@@ -534,15 +553,17 @@ EXERCISES: Final[tuple[ExerciseSpec, ...]] = (
         range_of_motion=_ROM_RULES,
         pause_rule=_RULES_PAUSE,
         note=(
-            "Stance stays unspecified. An unqualified 'Deadlift' is not assumed to be "
-            "conventional, even though competition rules mandate that stance."
+            "The regulation deadlift, stance unspecified. The rules define it by bar "
+            "position, grip, the start from the floor, and the completed erect position; "
+            "they do not prescribe a conventional or sumo stance, so an unqualified "
+            "'Deadlift' does not pick one."
         ),
     ),
     ExerciseSpec(
         key="conventional_deadlift",
         canonical_name="Conventional Deadlift",
         parent_lift=ParentLift.DEADLIFT,
-        specificity_level=SpecificityLevel.COMPETITION_LIFT,
+        specificity_level=SpecificityLevel.COMPETITION_VARIATION,
         implement=_BARBELL,
         bar_type=_OLYMPIC,
         equipment=_NO_APPARATUS,
@@ -550,21 +571,27 @@ EXERCISES: Final[tuple[ExerciseSpec, ...]] = (
         range_of_motion=_ROM_RULES,
         pause_rule=_RULES_PAUSE,
         note=(
-            "Competition rules require a conventional stance, so the competition deadlift is "
-            "this entity rather than a separate one."
+            "A stance-qualified way of performing the competition deadlift. Stance is an "
+            "observable descriptor rather than something the rules fix, so this is a "
+            "variation of the competition lift and is classified exactly as sumo is."
         ),
     ),
     ExerciseSpec(
         key="sumo_deadlift",
         canonical_name="Sumo Deadlift",
         parent_lift=ParentLift.DEADLIFT,
-        specificity_level=SpecificityLevel.SPORT_SPECIFIC,
+        specificity_level=SpecificityLevel.COMPETITION_VARIATION,
         implement=_BARBELL,
         bar_type=_OLYMPIC,
         equipment=_NO_APPARATUS,
         stance=Stance.WIDE,
         range_of_motion=_ROM_RULES,
         pause_rule=_RULES_PAUSE,
+        note=(
+            "The mirror image of conventional: a stance-qualified way of performing the "
+            "competition deadlift, classified identically, because the rules prescribe "
+            "neither stance."
+        ),
     ),
     ExerciseSpec(
         key="pause_deadlift",
@@ -1097,8 +1124,13 @@ ALIASES: Final[tuple[AliasSpec, ...]] = (
     AliasSpec(_CSV, "Smith Bench", "smith_bench"),
     # -- deadlift ------------------------------------------------------------
     AliasSpec(_CSV, "Comp Deadlift", "deadlift"),
-    AliasSpec(_CSV, "Deadlift (Conventional)", "deadlift"),
-    AliasSpec(_HEVY, "Competition Deadlift", "conventional_deadlift"),
+    # A competition-discipline label names the lift, not a stance. Binding it to the
+    # stance-unspecified ``deadlift`` is what keeps the deadlift family consistent with
+    # "Competition Squat" -> ``squat`` and "Competition Bench" -> ``bench``.
+    AliasSpec(_HEVY, "Competition Deadlift", "deadlift"),
+    # This spelling *does* name a stance, so it resolves to the stance-qualified
+    # entity rather than to the stance-unspecified competition deadlift.
+    AliasSpec(_CSV, "Deadlift (Conventional)", "conventional_deadlift"),
     AliasSpec(_CSV, "Conventional Pull", "conventional_deadlift"),
     AliasSpec(_CSV, "Conv DL", "conventional_deadlift"),
     AliasSpec(_CSV, "Conventional DL", "conventional_deadlift"),

@@ -229,6 +229,13 @@ class SpecificityLevel(StrEnum):
     coefficient: PSD must not hard-code how one variation substitutes for
     another, because that would impose a latent ontology on the ontology-free
     benchmark.
+
+    ``COMPETITION_LIFT`` is the lift *as the rules define it*, so it may only be
+    claimed where the rules leave the observable open. ``COMPETITION_VARIATION``
+    is a way of performing that lift which the rules admit but do not fix. Both
+    stance-qualified deadlifts sit in the second class symmetrically: the rules
+    prescribe neither a conventional nor a sumo stance, so neither style is the
+    competition lift and neither is more of it than the other.
     """
 
     COMPETITION_LIFT = "competition_lift"
@@ -255,7 +262,8 @@ class Stance(StrEnum):
     refuses to guess a stance the source never named. Sumo and conventional
     deadlifts are separate entities rather than one entity with a stance
     attribute, because the distinction may matter to a model even though both
-    share the same parent lift.
+    share the same parent lift -- and because competition rules admit both
+    stances equally, so neither can be the unqualified deadlift.
     """
 
     NOT_SPECIFIED = "not_specified"

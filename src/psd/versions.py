@@ -148,14 +148,30 @@ MANIFEST_VERSION = SchemaVersion(series="psd-manifest", major=0, minor=1, patch=
 #: a different cadence from the athlete-history tables, and because a consumer
 #: must be able to ask "which vocabulary was this label resolved against?"
 #: without the canonical schema changing.
-ONTOLOGY_VERSION = SchemaVersion(series="psd-ontology", major=0, minor=1, patch=0)
+#:
+#: ``1.0.0`` is a **major** bump: two exercises changed meaning rather than gaining an
+#: attribute. ``conventional_deadlift`` was classified ``competition_lift`` and
+#: ``sumo_deadlift`` ``sport_specific``, which asserted both that the competition
+#: deadlift *is* the conventional stance and that sumo is outside the sport. The rules
+#: prescribe neither stance, so both are now stance-qualified ``competition_variation``
+#: entries of the stance-unspecified ``deadlift``. A re-interpreted descriptor is a
+#: breaking change under this module's policy.
+ONTOLOGY_VERSION = SchemaVersion(series="psd-ontology", major=1, minor=0, patch=0)
 
 #: Version of the source-alias registry.
 #:
 #: Tracked separately from :data:`ONTOLOGY_VERSION` on purpose: a new alias for an
 #: existing exercise, or a new source namespace, must be able to ship without
 #: claiming that a canonical exercise identity changed.
-ALIAS_REGISTRY_VERSION = SchemaVersion(series="psd-ontology-alias", major=0, minor=1, patch=0)
+#:
+#: ``1.0.0`` is a **major** bump because two bindings were retargeted:
+#: ``Competition Deadlift`` moved from ``conventional_deadlift`` to the
+#: stance-unspecified ``deadlift``, matching ``Competition Squat`` and
+#: ``Competition Bench``; and ``Deadlift (Conventional)`` moved from ``deadlift`` to
+#: ``conventional_deadlift``, because that spelling states a stance and must resolve to
+#: the stance-qualified entity. Retargeting an alias changes what a stored source label
+#: means, so artifacts built against the old binding must be regenerated.
+ALIAS_REGISTRY_VERSION = SchemaVersion(series="psd-ontology-alias", major=1, minor=0, patch=0)
 
 #: Deterministic identifier scheme. Bump on any change to identifier derivation.
 ID_SCHEME = "psd-ids-v1"

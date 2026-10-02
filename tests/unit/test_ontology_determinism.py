@@ -170,7 +170,7 @@ def test_two_ontologies_built_from_the_same_data_are_equal() -> None:
 def test_the_artifact_relative_path_is_identical_on_every_platform() -> None:
     """A path with a ``/`` inside a component would diverge between the two."""
     relative = ontology_relative_path(ONTOLOGY)
-    assert relative.as_posix() == "canonical/ontology/psd-ontology-0.1.0"
+    assert relative.as_posix() == "canonical/ontology/psd-ontology-1.0.0"
     assert all("/" not in part and "\\" not in part for part in relative.parts)
 
 

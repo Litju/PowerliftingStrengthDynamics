@@ -32,13 +32,13 @@ __all__ = ("EXPECTED_ONTOLOGY_DIGEST", "EXPECTED_TABLE_DIGESTS", "ontology_diges
 
 #: Per-table digests, so a divergence names the table that changed.
 EXPECTED_TABLE_DIGESTS: dict[str, str] = {
-    "exercise_definition": "16574c1f2d8a161078d507f41dcad5167e75b17bb7cc3401c526f662f0778a35",
-    "exercise_alias": "3d74dc144ed39bdea7e28d03933a7c89fd0afee3e82c7a29151f6028cc85653e",
-    "exercise_normalization": "f29a403dc9af0c55e0e974f9263c62bab5daa9955e07836d76310b64e8aa0681",
+    "exercise_definition": "84a7069051c3b9de2fea287d24aa4974d2d56546383780ee12b9557776bcccc7",
+    "exercise_alias": "e7edf50280e1137d7351ca6643a769ee467645d35c4f2bcffaeb86819a960af3",
+    "exercise_normalization": "574bb7a5e02e30a8e9abe202835ec1c92499aaf8465f4aa429676c9eaf094d15",
 }
 
 #: A single digest over all three tables, in registry order.
-EXPECTED_ONTOLOGY_DIGEST: str = "d6d381cdd3596747d74cf26407a069bcb5dbd69a7caaa7c6beb0dca6d3268260"
+EXPECTED_ONTOLOGY_DIGEST: str = "9daf4f141f85000c05aef67a57afa377746f8b160d56c3d6af7dad13f9761f6c"
 
 ONTOLOGY_TABLES: tuple[str, ...] = (
     "exercise_definition",

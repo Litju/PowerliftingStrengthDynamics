@@ -43,9 +43,9 @@ def test_ontology_is_reachable_from_the_root_cli() -> None:
 def test_ontology_version_reports_both_versions() -> None:
     result = runner.invoke(ontology_app, ["version"])
     assert result.exit_code == 0, result.output
-    assert "psd-ontology/0.1.0" in result.output
-    assert "psd-ontology-alias/0.1.0" in result.output
-    assert "dataset_id             psd-ontology-0.1.0" in result.output
+    assert "psd-ontology/1.0.0" in result.output
+    assert "psd-ontology-alias/1.0.0" in result.output
+    assert "dataset_id             psd-ontology-1.0.0" in result.output
 
 
 def test_ontology_list_shows_the_canonical_exercises() -> None:
@@ -145,6 +145,28 @@ def test_resolve_reports_the_source_system_it_used() -> None:
     assert json.loads(result.stdout)[0]["source_system"] == "hevy"
 
 
+def test_resolve_reports_the_competition_deadlift_as_a_lift_not_a_stance() -> None:
+    """The CLI is how a reviewer checks this claim, so it has to agree with the data."""
+    result = runner.invoke(ontology_app, ["resolve", "Competition Deadlift", "--json"])
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)[0]
+    assert payload["exercise_key"] == "deadlift"
+
+
+@pytest.mark.parametrize(
+    ("label", "expected"),
+    [
+        ("Conventional Deadlift", "conventional_deadlift"),
+        ("Sumo Deadlift", "sumo_deadlift"),
+        ("Deadlift", "deadlift"),
+    ],
+)
+def test_resolve_keeps_every_deadlift_stance_distinct(label: str, expected: str) -> None:
+    result = runner.invoke(ontology_app, ["resolve", label, "--json"])
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout)[0]["exercise_key"] == expected
+
+
 def test_coverage_summarises_resolutions_and_refusals() -> None:
     result = runner.invoke(ontology_app, ["coverage", "--json"])
     assert result.exit_code == 0, result.output
@@ -161,7 +183,7 @@ def test_build_persists_the_ontology_as_a_canonical_dataset() -> None:
     result = runner.invoke(ontology_app, ["build"])
     assert result.exit_code == 0, result.output
     assert "exercises" in result.output
-    assert "psd-ontology-0.1.0" in result.output
+    assert "psd-ontology-1.0.0" in result.output
 
 
 def test_the_built_ontology_verifies_through_the_canonical_command() -> None:

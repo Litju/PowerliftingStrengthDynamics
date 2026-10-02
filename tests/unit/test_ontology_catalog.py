@@ -3,11 +3,15 @@
 The catalog is data, so the tests that matter most are the ones asserting what the
 data does *not* say. An ontology that quietly merged sumo into conventional, or
 close-grip bench into competition bench, would still pass every "does it resolve"
-test; only the distinctness tests below would catch it.
+test; only the distinctness tests below would catch it. The same holds for claims
+*about the sport*: a note asserting that the rules prescribe a deadlift stance passes
+every resolution test and is still wrong, so the stance tests assert the prose as well
+as the descriptors.
 """
 
 from __future__ import annotations
 
+import re
 from datetime import UTC, datetime
 
 import pyarrow as pa
@@ -177,7 +181,9 @@ SEMANTIC_DISTINCTIONS: tuple[tuple[str, str, str], ...] = (
     ("High Bar Squat", "high_bar_squat", "low_bar_squat"),
     ("Squat", "squat", "low_bar_squat"),
     ("Sumo Deadlift", "sumo_deadlift", "conventional_deadlift"),
+    ("Conventional Deadlift", "conventional_deadlift", "sumo_deadlift"),
     ("Deadlift", "deadlift", "conventional_deadlift"),
+    ("Competition Deadlift", "deadlift", "conventional_deadlift"),
     ("Paused Deadlift", "pause_deadlift", "deadlift"),
     ("Paused Bench", "pause_bench", "bench"),
     ("2ct Bench", "two_count_bench", "pause_bench"),
@@ -294,6 +300,90 @@ def test_only_confidence_is_numeric_and_it_describes_the_mapping() -> None:
 
 
 # ---------------------------------------------------------------------------
+# competition rules prescribe the lift, not every observable of it
+# ---------------------------------------------------------------------------
+
+
+def test_the_catalog_never_claims_the_rules_require_a_deadlift_stance() -> None:
+    """No note may assert a stance the rulebook does not prescribe.
+
+    The IPF Technical Rulebook defines the deadlift by bar position, grip, the start
+    from the floor, and the completed erect position; it prescribes neither a
+    conventional nor a sumo stance. The catalog previously claimed otherwise, and the
+    claim is what bound "competition deadlift" to one stance. Checking the declared
+    prose keeps the correction from being reintroduced by an edit that looks like
+    documentation.
+    """
+    pattern = re.compile(
+        r"(?i)\b(requires?|mandates?|demands?|enforces?)\b[^.]*\b(stance|conventional|sumo)\b"
+    )
+    offenders = [
+        f"{spec.key}: {text}"
+        for spec in EXERCISES
+        if spec.note is not None
+        for text in (pattern.search(spec.note),)
+        if text is not None
+    ]
+    offenders.extend(
+        f"alias {alias.raw_label}: {text}"
+        for alias in ALIASES
+        if alias.note is not None
+        for text in (pattern.search(alias.note),)
+        if text is not None
+    )
+    assert offenders == []
+
+
+def test_the_competition_deadlift_is_the_stance_unspecified_entity() -> None:
+    """``deadlift`` is the lift; the two stances are variations of it."""
+    competition = ONTOLOGY.spec("deadlift")
+    assert competition.specificity_level is SpecificityLevel.COMPETITION_LIFT
+    assert competition.stance.value == "not_specified"
+    for key in ("conventional_deadlift", "sumo_deadlift"):
+        style = ONTOLOGY.spec(key)
+        assert style.parent_lift is competition.parent_lift
+        assert style.specificity_level is SpecificityLevel.COMPETITION_VARIATION
+        assert style.stance is not competition.stance
+        assert style.implement == competition.implement
+        assert style.bar_type == competition.bar_type
+        assert style.range_of_motion == competition.range_of_motion
+        assert style.pause_rule == competition.pause_rule
+
+
+def test_a_competition_label_resolves_to_the_stance_unspecified_lift() -> None:
+    """The discipline label names a lift, in every family that has one.
+
+    This is the mapping the reviewer flagged: "Competition Deadlift" used to resolve
+    to ``conventional_deadlift``, which silently claimed the rules mandate that stance.
+    """
+    open_about_stance = {"not_specified", "unknown"}
+    for label, key in (
+        ("Competition Squat", "squat"),
+        ("Competition Bench", "bench"),
+        ("Competition Deadlift", "deadlift"),
+        ("Comp Deadlift", "deadlift"),
+    ):
+        outcome = ONTOLOGY.resolve(label, source_system="hevy")
+        assert outcome.exercise_key == key, label
+        assert ONTOLOGY.spec(key).stance.value in open_about_stance, label
+
+
+def test_a_stated_stance_still_resolves_to_the_stance_qualified_entity() -> None:
+    """The correction must not over-refuse: a source that names a stance is answered."""
+    for label, key in (
+        ("Conventional Deadlift", "conventional_deadlift"),
+        ("Conventional DL", "conventional_deadlift"),
+        ("Deadlift (Conventional)", "conventional_deadlift"),
+        ("Standard Deadlift", "conventional_deadlift"),
+        ("Sumo Deadlift", "sumo_deadlift"),
+        ("Sumo DL", "sumo_deadlift"),
+        ("Low Bar Squat", "low_bar_squat"),
+        ("High Bar Squat", "high_bar_squat"),
+    ):
+        assert ONTOLOGY.resolve(label, source_system="generic_csv").exercise_key == key, label
+
+
+# ---------------------------------------------------------------------------
 # curated refusals and probes
 # ---------------------------------------------------------------------------
 
@@ -354,7 +444,7 @@ REQUIRED_FORMS: tuple[tuple[str, str], ...] = (
     ("Incline Bench", "incline_bench"),
     # deadlift family
     ("Deadlift", "deadlift"),
-    ("Competition Deadlift", "conventional_deadlift"),
+    ("Competition Deadlift", "deadlift"),
     ("Conventional Deadlift", "conventional_deadlift"),
     ("Sumo Deadlift", "sumo_deadlift"),
     ("Paused Deadlift", "pause_deadlift"),
