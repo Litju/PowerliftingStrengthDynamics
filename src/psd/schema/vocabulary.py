@@ -923,6 +923,37 @@ class ValueEncoding(StrEnum):
     JSON = "json"
 
 
+class FindingClass(StrEnum):
+    """What a data-quality finding means, so reports are not read as one bucket.
+
+    A corpus audit produces numbers of several entirely different kinds, and a reader
+    who sees them in one undifferentiated list learns nothing about what to do with
+    any of them. Four classes exist because four genuinely different responses exist:
+
+    ``SOURCE_ANOMALY``
+        The pinned source published something unusual. It is a fact about the source,
+        reported rather than repaired, and it is *not* evidence that the transform
+        misbehaved.
+    ``TRANSFORMATION_INVARIANT_FAILURE``
+        The transform broke a contract it declared. These counts are expected to be
+        zero for a correct build, so a non-zero value is a defect in PSD, not in the
+        source.
+    ``DESCRIPTIVE_LONGITUDINAL_TRANSITION``
+        A change across an athlete's competition history that is perfectly ordinary:
+        an equipment category or a federation changed. Descriptive, never an error.
+    ``SOURCE_LIMITATION``
+        A question the source cannot answer at all, stated so that nobody reads the
+        silence as a clean result. ``not_identifiable`` is part of the value because
+        "we looked and found nothing" and "the source does not carry this" must never
+        render as the same report.
+    """
+
+    SOURCE_ANOMALY = "source_anomaly"
+    TRANSFORMATION_INVARIANT_FAILURE = "transformation_invariant_failure"
+    DESCRIPTIVE_LONGITUDINAL_TRANSITION = "descriptive_longitudinal_transition"
+    SOURCE_LIMITATION = "source_limitation_not_identifiable"
+
+
 #: Every controlled vocabulary, keyed by the field it constrains.
 VOCABULARIES: Final[dict[str, tuple[str, ...]]] = {
     "missingness_reason": tuple(member.value for member in MissingnessReason),
@@ -976,6 +1007,7 @@ VOCABULARIES: Final[dict[str, tuple[str, ...]]] = {
     "equipment_item": tuple(member.value for member in EquipmentItem),
     "implement_type": tuple(member.value for member in ImplementType),
     "value_encoding": tuple(member.value for member in ValueEncoding),
+    "finding_class": tuple(member.value for member in FindingClass),
     "source_nature": tuple(member.value for member in SourceNature),
     "data_regime": tuple(member.value for member in DataRegime),
     "consent_basis": tuple(member.value for member in ConsentBasis),
