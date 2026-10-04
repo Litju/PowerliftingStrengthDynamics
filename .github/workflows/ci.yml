@@ -110,7 +110,11 @@ jobs:
     runs-on: [self-hosted, Windows, X64]
     defaults:
       run:
-        shell: pwsh
+        # Windows PowerShell 5.1, not `pwsh`. `pwsh` is PowerShell 7, which is a separate
+        # install that a self-hosted Windows runner is not required to have; asking for it
+        # makes the job's shell a property of one machine's configuration rather than of the
+        # runner contract. `powershell` is the documented default on every Windows runner.
+        shell: powershell
     steps:
       - uses: actions/checkout@v4
 
